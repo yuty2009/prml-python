@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+from .utils import *
 
 
 ## Ridge regression
@@ -11,8 +12,11 @@ import numpy as np
 def ridgereg(y, X, coeff = 1e-4):
     N, P = X.shape
     PHI = np.concatenate((np.ones([N,1]), X), axis=1)
-    invC = np.linalg.inv(coeff*np.eye(P+1)+ np.matmul(PHI.T, PHI))
-    w = np.matmul(np.matmul(invC, PHI.T), y)
+    if (P > N):
+        invC = woodburyinv(coeff * np.eye(P+1), PHI.T, PHI, np.eye(N))
+    else:
+        invC = np.linalg.inv(coeff*np.eye(P+1)+ np.dot(PHI.T, PHI))
+    w = np.dot(np.dot(invC, PHI.T), y)
     b = w[1:]
     b0 = w[0]
     return b, b0

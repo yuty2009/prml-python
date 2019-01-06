@@ -8,13 +8,15 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from basic.regressor import ridgereg
+from basic.regressor import *
+from bayesian.regressor import *
 
 def polybasis(x, order):
     vector = np.zeros([len(x),order+1])
     for i in range(order+1):
         vector[:,i] = np.power(x, i)
     return vector
+
 
 if __name__ == "__main__":
 
@@ -29,7 +31,9 @@ if __name__ == "__main__":
     PHI1 = polybasis(x1, order)
 
     # train the model
-    w, b = ridgereg(y1, PHI1, 1e-4)
+    # w, b = ridgereg(y1, PHI1, 1e-4)
+    # w, b = bayesreg(y1, PHI1)
+    w, b = bardreg(y1, PHI1)
 
     # generate testing samples
     perm2 = np.random.permutation(N)
