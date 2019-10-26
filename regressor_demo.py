@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from basic.regressor import *
 from bayesian.regressor import *
+# from bayesian.pymc3 import *
 
 def polybasis(x, order):
     vector = np.zeros([len(x),order+1])

@@ -36,7 +36,8 @@ y = y0[perm]
 # calculate the discriminability of each feature
 rr = rsquare(y, X)
 
-w1, b1 = bgardlog(y, X, NG)
+w1, b1 = bardlog(y, X)
+w2, b2 = bgardlog(y, X, NG)
 
 # visualize
 plt.figure(1)
@@ -49,5 +50,10 @@ plt.subplot(3,1,2)
 plt.plot(w1)
 plt.axis('tight')
 # plt.ylim([-2, 2])
-plt.title('bgardreg')
+plt.title('bardlog')
+plt.subplot(3,1,3)
+plt.plot(w2)
+plt.axis('tight')
+# plt.ylim([-2, 2])
+plt.title('bgardlog')
 plt.show()

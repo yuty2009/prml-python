@@ -51,6 +51,7 @@ def bayeslog(y, X):
         # [v, d] = np.linalg.eig(np.dot(np.dot(PHI.T,R),PHI))
         d = myeig(np.dot(np.diag(np.sqrt(diagR)), PHI))
         gamma = sum(d / (alpha + d))
+        # Note that np.dot() is the inner product for vectors in Python
         alpha = gamma / np.dot(w.T, w)
 
         evidence = (P/2) * np.log(alpha) + sum(y*np.log(t)+(1-y)*np.log(1-t)) \
@@ -133,7 +134,8 @@ def bardlog(y, X):
         # [v, d] = np.linalg.eig(np.dot(np.dot(PHI.T,R),PHI))
         d = myeig(np.dot(np.diag(np.sqrt(diagR)), PHI))
         gamma1 = 1 - alphas1 * np.diag(Sigma1)
-        alphas1 = np.maximum(gamma1, eps) / (np.dot(w1.T, w1) + 1e-32)
+        # Note that * is dot product for vectors in Python
+        alphas1 = np.maximum(gamma1, eps) / (w1.T*w1 + 1e-32)
         alphas[index1] = alphas1
 
         evidence = 0.5*np.sum(np.log(alphas)) + sum(y*np.log(t)+(1-y)*np.log(1-t)) \
@@ -229,6 +231,8 @@ def bgardlog(y, X, group):
             w_ig = w[index_ig]
             if np.linalg.norm(w_ig) == 0: continue
             gamma_ig = gamma[index_ig]
+            # Note that * is dot product for vectors in Python.
+            # But w_ig is a matrix here due to w_ig = w[index_ig]
             alpha_ig = sum(gamma_ig) / np.dot(w_ig.T,w_ig)
             alphas[index_ig] = alpha_ig
 

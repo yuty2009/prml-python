@@ -46,6 +46,7 @@ def bayesreg(y, X):
 
         w = beta * np.dot(np.dot(Sigma, PHI.T), y)
         gamma = np.sum(beta * d / (alpha + beta * d))
+        # Note that np.dot() is the inner product for vectors in Python
         alpha = gamma / np.dot(w.T, w)
         rmse = np.sum((y-np.dot(PHI, w))**2)
         beta = max(N - gamma, eps) / (rmse + 1e-32)
@@ -88,7 +89,7 @@ def bardreg(y, X):
     w = np.dot(np.dot(invC, PHI.T), y)
     # w = ones(P, 1) # rough initialization
 
-    alphas = 2 * np.ones(P+1) # difference with bayesreg
+    alphas = 2 * np.ones(P + 1)  # difference with bayesreg
     beta = 10
 
     # stop conditions
@@ -125,7 +126,8 @@ def bardreg(y, X):
         if len(index0) > 0: w[index0] = 0
 
         gamma1 = 1 - alphas1 * diagSigma1
-        alphas1 = np.maximum(gamma1, eps) / (np.dot(w.T, w) + 1e-32)
+        # Note that * is dot product for vectors in Python
+        alphas1 = np.maximum(gamma1, eps) / (w1.T*w1 + 1e-32)
         alphas[index1] = alphas1
         rmse = np.sum((y-np.dot(PHI, w))**2)
         beta = max(N - np.sum(gamma1), eps) / (rmse + 1e-32)
@@ -222,7 +224,9 @@ def bgardreg(y, X, group):
             w_ig = w[index_ig]
             if np.linalg.norm(w_ig) == 0: continue
             gamma_ig = gamma[index_ig]
-            alpha_ig = np.maximum(sum(gamma_ig), eps) / (np.dot(w_ig.T,w_ig)+1e-32)
+            # Note that * is dot product for vectors in Python.
+            # But w_ig is a matrix here due to w_ig = w[index_ig]
+            alpha_ig = np.maximum(sum(gamma_ig), eps) / (np.dot(w_ig.T,w_ig) + 1e-32)
             alphas[index_ig] = alpha_ig
 
         rmse = np.sum((y-np.dot(PHI, w))**2)
