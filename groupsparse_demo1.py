@@ -3,8 +3,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from basic.utils import *
-from bayesian.regressor import *
-# from bayesian.pymc3 import *
+# from bayesian.regressor import *
+from bayesian.pymc3 import *
 
 
 N = 256
