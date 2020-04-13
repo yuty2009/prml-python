@@ -20,9 +20,9 @@ if __name__ == "__main__":
 
     # train the model
     W_lda, b_lda = FLDA(y, X)
-    # W_log, b_log = logistic(y, X)
+    W_log, b_log = logistic_sgd(y, X, 1e-4, AdamOptimizer())
     # W_log, b_log = bayeslog(y, X)
-    W_log, b_log = bardlog(y, X)
+    # W_log, b_log = bardlog(y, X)
 
     y1 = np.sign(np.matmul(X1, W_lda) + b_lda)
     y2 = np.sign(np.matmul(X2, W_lda) + b_lda)
