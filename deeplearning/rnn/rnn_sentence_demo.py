@@ -13,7 +13,7 @@ sentence_end_token = "SENTENCE_END"
 
 # Read the data and append SENTENCE_START and SENTENCE_END tokens
 print("Reading CSV file...")
-with open('data/reddit-comments-2015-08.csv', 'r', encoding='utf-8') as f:
+with open('../../dataset/reddit-comments-2015-08.csv', 'r', encoding='utf-8') as f:
     reader = csv.reader(f, skipinitialspace=True)
     # Split full comments into sentences
     sentences = itertools.chain(*[nltk.sent_tokenize(x[0].lower()) for x in reader])

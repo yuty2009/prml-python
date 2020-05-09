@@ -3,8 +3,8 @@
 import gzip
 import pickle
 import numpy as np
-from nn.activation import *
-from nn.network import *
+from deeplearning.nn.activation import *
+from deeplearning.nn.network import *
 
 
 ## Generate one-hot coded labels
