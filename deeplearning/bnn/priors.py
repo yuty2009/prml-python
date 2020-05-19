@@ -1,67 +1,58 @@
 # -*- coding: utf-8 -*-
 #
 # reference: https://github.com/JavierAntoran/Bayesian-Neural-Networks/
+#            https://pytorch.org/docs/stable/distributions.html
 
-import torch
-import numpy as np
-
-
-def loglike_isotropic_gauss(x, mu, sigma, do_sum=True):
-    cte_term = -(0.5) * np.log(2 * np.pi)
-    det_sig_term = -torch.log(sigma)
-    inner = (x - mu) / sigma
-    dist_term = -(0.5) * (inner ** 2)
-
-    if do_sum:
-        out = (cte_term + det_sig_term + dist_term).sum()  # sum over all weights
-    else:
-        out = (cte_term + det_sig_term + dist_term)
-    return out
+import math
+from numbers import Number
 
 
-class prior_laplace(object):
+class LaplacePrior(object):
     def __init__(self, mu, b):
         self.mu = mu
         self.b = b
 
-    def loglike(self, x, do_sum=True):
-        if do_sum:
-            return (-np.log(2 * self.b) - torch.abs(x - self.mu) / self.b).sum()
-        else:
-            return -np.log(2 * self.b) - torch.abs(x - self.mu) / self.b
+    def log_prob(self, x):
+        return -math.log(2 * self.b) - abs(x - self.mu) / self.b
 
 
-class prior_gauss(object):
-    def __init__(self, mu, sigma):
+class GaussPrior(object):
+    def __init__(self, mu, sigma, backend=None):
         self.mu = mu
         self.sigma = sigma
 
-        self.cte_term = -(0.5) * np.log(2 * np.pi)
-        self.det_sig_term = -np.log(self.sigma)
-
-    def loglike(self, x, do_sum=True):
-        dist_term = -(0.5) * ((x - self.mu) / self.sigma) ** 2
-        if do_sum:
-            return (self.cte_term + self.det_sig_term + dist_term).sum()
+        self.const_term = -(0.5) * math.log(2 * math.pi)
+        if isinstance(self.sigma, Number):
+            self.log_scale_term = math.log(self.sigma)
         else:
-            return self.cte_term + self.det_sig_term + dist_term
+            if backend is None:
+                self.log_scale_term = - self.sigma.log()
+            else:
+                self.log_scale_term = - backend.log(self.sigma)
+
+    def log_prob(self, x):
+        dist_term = - 0.5 * ((x - self.mu) / self.sigma) ** 2
+
+        return self.const_term + self.log_scale_term + dist_term
 
 
-class prior_gauss_mixture(object):
-    def __init__(self, mu1, mu2, sigma1, sigma2, pi):
-        self.N1 = prior_gauss(mu1, sigma1)
-        self.N2 = prior_gauss(mu2, sigma2)
-        self.pi1 = pi
-        self.pi2 = (1 - pi)
+class GaussMixturePrior(object):
+    def __init__(self, mus, sigmas, pis, backend=None):
+        self.backend = backend
+        self.pis = pis
+        self.components = []
+        for mu, sigma in zip (mus, sigmas):
+            component = GaussPrior(mu, sigma, backend=backend)
+            self.components.append(component)
 
-    def loglikelihood(self, x):
-        N1_ll = self.N1.loglike(x)
-        N2_ll = self.N2.loglike(x)
+    def log_prob(self, x):
+        ll_total = 0
+        for component, pi in zip(self.components, self.pis):
+            if self.backend is None:
+                ll_total = ll_total + pi * component.log_prob(x).exp()
+            else:
+                ll_total = ll_total + pi * self.backend.exp(component.log_prob(x))
 
-        # Numerical stability trick -> unnormalising logprobs will underflow otherwise
-        max_loglike = torch.max(N1_ll, N2_ll)
-        normalised_like = self.pi1 * torch.exp(N1_ll - max_loglike) \
-                          + self.pi2 * torch.exp(N2_ll - max_loglike)
-        loglike = torch.log(normalised_like) + max_loglike
+        ll_total = ll_total.log() if self.backend is None else self.backend.log(ll_total)
 
-        return loglike
+        return ll_total

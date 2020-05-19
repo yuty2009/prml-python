@@ -30,6 +30,6 @@ class LeNet5(nn.Module):
         x = self.drop1(x)
         x = F.relu(self.dense1(x))
         x = self.drop2(x)
-        return F.log_softmax(self.dense3(x))
+        return self.dense3(x)
 
 

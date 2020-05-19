@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from basic.regressor import *
 from bayesian.regressor import *
+# from bayesian.pymc3 import *
 from sklearn.linear_model import ARDRegression
 
 N = 256

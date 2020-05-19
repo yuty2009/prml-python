@@ -58,7 +58,7 @@ else:
             y_batch = torch.tensor(y_batch, device=device)
 
             yp_batch = cnn(X_batch)
-            loss = F.nll_loss(yp_batch, y_batch.long())
+            loss = F.nll_loss(yp_batch, y_batch.long(), reduction='sum')
 
             optimizer.zero_grad()
             loss.backward()
