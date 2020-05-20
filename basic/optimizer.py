@@ -12,7 +12,7 @@ class GradientDescentOptimizer(object):
         raise NotImplementedError()
 
 
-class AdagradOptimizer(object):
+class AdagradOptimizer(GradientDescentOptimizer):
     def __init__(self, maxit=500, stopeps=1e-6):
         self.maxit = maxit
         self.stopeps = stopeps

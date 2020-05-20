@@ -5,9 +5,35 @@
 
 import math
 from numbers import Number
+from abc import ABCMeta, abstractmethod
 
 
-class LaplacePrior(object):
+class BasePrior(object):
+    __metaclass__ = ABCMeta
+
+    @abstractmethod
+    def log_prob(self, x):
+        raise NotImplementedError()
+
+
+class GammaPrior(BasePrior):
+    def __init__(self, a, b, backend=None):
+        self.backend = backend
+        self.a = a
+        self.b = b
+
+    def log_prob(self, x):
+        if self.backend is None:
+            return (self.a * math.log(self.b) +
+                    (self.a - 1) * x.log() -
+                    self.b * x - self.a.lgamma())
+        else:
+            return (self.a * math.log(self.b) +
+                    (self.a - 1) * self.backend.log(x) -
+                    self.b * x - self.backend.lgamma(self.a))
+
+
+class LaplacePrior(BasePrior):
     def __init__(self, mu, b):
         self.mu = mu
         self.b = b
@@ -16,7 +42,7 @@ class LaplacePrior(object):
         return -math.log(2 * self.b) - abs(x - self.mu) / self.b
 
 
-class GaussPrior(object):
+class GaussPrior(BasePrior):
     def __init__(self, mu, sigma, backend=None):
         self.mu = mu
         self.sigma = sigma
@@ -36,12 +62,12 @@ class GaussPrior(object):
         return self.const_term + self.log_scale_term + dist_term
 
 
-class GaussMixturePrior(object):
+class GaussMixturePrior(BasePrior):
     def __init__(self, mus, sigmas, pis, backend=None):
         self.backend = backend
         self.pis = pis
         self.components = []
-        for mu, sigma in zip (mus, sigmas):
+        for mu, sigma in zip(mus, sigmas):
             component = GaussPrior(mu, sigma, backend=backend)
             self.components.append(component)
 

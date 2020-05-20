@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from basic.regressor import *
-from bayesian.regressor import *
+# from bayesian.regressor import *
 # from bayesian.pymc3 import *
+from bayesian.pytorch import *
 from sklearn.linear_model import ARDRegression
 
 N = 256
@@ -23,14 +24,13 @@ for i in range(NSG):
 # design matrix and class label
 sigma = 0.1
 y = np.dot(X, w0) + sigma*np.random.randn(N)
-gid = np.arange(0, X.shape[1])
 
 ardr = ARDRegression()
 ardr.fit(X, y)
 w1 = ardr.coef_
 
-# w2, b2 = bgardreg(y, X, gid)
-w2, b2 = bardreg(y, X)
+# w2, b2 = bardreg(y, X)
+w2, b2 = bgardreg(y, X, groups)
 
 # visualize
 plt.figure(1)

@@ -130,6 +130,9 @@ if __name__ == "__main__":
     X_ = torch.tensor(X, device=device)
     y_ = torch.tensor(y, device=device)
 
+    prior_rho_1 = nn.Parameter(torch.zeros(1, 20, device=device), requires_grad=True)
+    prior_rho_2 = nn.Parameter(torch.zeros(20, 20, device=device), requires_grad=True)
+    prior_rho_3 = nn.Parameter(torch.zeros(20, 20, device=device), requires_grad=True)
     mlp = BayesMLP(input_dim=X_.shape[1],
                    hidden_dims=[20, 20, 1],
                    acts=[nn.ReLU(inplace=True),
@@ -137,7 +140,8 @@ if __name__ == "__main__":
                          None],
                    # priors=LaplacePrior(mu=0, b=1.0),
                    # priors=GaussPrior(mu=0, sigma=1.0),
-                   priors=GaussMixturePrior(mus=[0, 0], sigmas=[1.5, 0.1], pis=[0.5, 0.5]),
+                   # priors=GaussMixturePrior(mus=[0, 0], sigmas=[1.5, 0.1], pis=[0.5, 0.5]),
+                   priors=[prior_rho_1, prior_rho_2, prior_rho_3],
                    dtype=X_.dtype
                    ).to(device)
 
