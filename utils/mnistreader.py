@@ -28,12 +28,15 @@ class MNISTReader(object):
         self._labelByte2 = self._tag + self._labelByte
 
     def get_train_dataset(self, onehot_label=False, scale=True,
+                          normalize=False, mean_std=(0.5, 0.5),
                           reshape=False, new_shape=(-1, 28, 28, 1),
                           tranpose=False, new_pos=(0, 1, 2, 3)):
         train_images = self.read_raw_images(self._f_train_images)
         train_labels = self.read_raw_labels(self._f_train_labels)
         if scale:
             train_images = train_images.astype('float32') / 255.
+        if normalize:
+            train_images = (train_images.astype('float32') - mean_std[0]) / mean_std[1]
         if reshape:
             train_images = np.reshape(train_images, new_shape)
         if tranpose:
@@ -44,12 +47,15 @@ class MNISTReader(object):
         return dataset
 
     def get_test_dataset(self, onehot_label=False, scale=True,
-                          reshape=False, new_shape=(-1, 28, 28, 1),
-                          tranpose=False, new_pos=(0, 1, 2, 3)):
+                         normalize=False, mean_std=(0.5, 0.5),
+                         reshape=False, new_shape=(-1, 28, 28, 1),
+                         tranpose=False, new_pos=(0, 1, 2, 3)):
         test_images = self.read_raw_images(self._f_test_images)
         test_labels = self.read_raw_labels(self._f_test_labels)
         if scale:
             test_images = test_images.astype('float32') / 255.
+        if normalize:
+            test_images = (test_images.astype('float32') - mean_std[0]) / mean_std[1]
         if reshape:
             test_images = np.reshape(test_images, new_shape)
         if tranpose:

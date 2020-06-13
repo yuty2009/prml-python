@@ -3,8 +3,9 @@
 import argparse
 import torch
 import torch.optim as optim
+import torch.nn.functional as F
 from utils.mnistreader import *
-from deeplearning.cnn.lenet5_pytorch import *
+from deeplearning.cnn.pytorch.lenet5 import *
 
 f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
 f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'
@@ -28,7 +29,7 @@ help_ = "Load model checkpoints"
 parser.add_argument("-w", "--weights", help=help_)
 args = parser.parse_args()
 
-cnn = LeNet5(input_shape=(imsize, imsize, 1)).to(device)
+cnn = LeNet5(num_classes=10).to(device)
 optimizer = optim.Adam(cnn.parameters(), lr=1e-3)
 
 if args.weights:

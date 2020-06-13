@@ -14,7 +14,7 @@ from basic.regressor import *
 from bayesian.pytorch import *
 
 def polybasis(x, order):
-    vector = np.zeros([len(x),order+1])
+    vector = np.zeros([len(x),order+1]).astype(np.float32)
     for i in range(order+1):
         vector[:,i] = np.power(x, i)
     return vector
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # train the model
     # w, b = ridgereg(y1, PHI1, 1e-4)
-    w, b = bayesreg(y1, PHI1)
+    w, b = bayesreg(y1, PHI1, sigma)
     # w, b = bardreg(y1, PHI1)
 
     # generate testing samples

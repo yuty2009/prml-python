@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from utils.mnistreader import *
-from deeplearning.cnn.lenet5_keras import *
+from deeplearning.cnn.keras.lenet5 import *
 
 f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
 f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'

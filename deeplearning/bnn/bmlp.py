@@ -2,14 +2,14 @@
 #
 # reference: https://github.com/JavierAntoran/Bayesian-Neural-Networks/
 
-import torch.optim as optim
+import numpy as np
 from deeplearning.bnn.bayeslayers import *
 
 
 class BayesMLP(nn.Module):
     """Fully-connected Network with Bayes By Backprop"""
 
-    def __init__(self, input_dim, hidden_dims, acts, priors, kl_weight=1, dtype=torch.float):
+    def __init__(self, input_dim, hidden_dims, acts, priors):
         super(BayesMLP, self).__init__()
 
         self.input_dim = input_dim
@@ -46,11 +46,7 @@ class BayesMLP(nn.Module):
             if self.priors[i] is None:
                 self.layers.append(nn.Linear(in_dims[i], out_dims[i]))
             else:
-                self.layers.append(BayesLinear(n_in=in_dims[i],
-                                               n_out=out_dims[i],
-                                               prior=self.priors[i],
-                                               kl_weight=kl_weight,
-                                               dtype=dtype))
+                self.layers.append(BayesLinear(in_dims[i], out_dims[i], self.priors[i]))
 
     def forward(self, X, sample=False):
 
@@ -80,28 +76,11 @@ class BayesMLP(nn.Module):
 
         return torch.mean(predictions, dim=0), loss_kl
 
-    def get_weight_samples(self, n_samples=10):
-
-        weights = []
-        state_dict = self.state_dict()
-        for i in range(n_samples):
-            weights_sample = []
-            previous_layer_name = ''
-            for key in state_dict.keys():
-                layer_name = '.'.join(key.split('.')[:-1])
-                if layer_name != previous_layer_name:
-                    previous_layer_name = layer_name
-                    W_mu = state_dict[layer_name + '.W_mu'].data
-                    W_rho = state_dict[layer_name + '.W_rho'].data
-                    W, b = sample_weights(W_mu=W_mu, W_rho=W_rho, b_mu=None, b_rho=None)
-                    weights_sample.append(W.cpu().view(-1).numpy())
-            weights.append(weights_sample)
-        return np.array(weights)
-
 
 if __name__ == "__main__":
 
     import numpy as np
+    import torch.optim as optim
     import matplotlib.pyplot as plt
 
     def f(x, sigma):
@@ -111,7 +90,7 @@ if __name__ == "__main__":
     train_size = 32
     noise = 1.0
 
-    X = np.linspace(-0.5, 0.5, train_size).reshape(-1, 1)
+    X = np.linspace(-0.5, 0.5, train_size).reshape(-1, 1).astype(np.float32)
     y = f(X, sigma=noise)
     y_true = f(X, sigma=0.0)
 
@@ -130,29 +109,28 @@ if __name__ == "__main__":
     X_ = torch.tensor(X, device=device)
     y_ = torch.tensor(y, device=device)
 
-    prior_rho_1 = nn.Parameter(torch.zeros(1, 20, device=device), requires_grad=True)
-    prior_rho_2 = nn.Parameter(torch.zeros(20, 20, device=device), requires_grad=True)
-    prior_rho_3 = nn.Parameter(torch.zeros(20, 20, device=device), requires_grad=True)
-    mlp = BayesMLP(input_dim=X_.shape[1],
-                   hidden_dims=[20, 20, 1],
+    input_dim = X_.shape[-1]
+    hidden_dims = [32, 16, 1]
+    mlp = BayesMLP(input_dim=input_dim,
+                   hidden_dims=hidden_dims,
                    acts=[nn.ReLU(inplace=True),
                          nn.ReLU(inplace=True),
                          None],
                    # priors=LaplacePrior(mu=0, b=1.0),
-                   # priors=GaussPrior(mu=0, sigma=1.0),
+                   priors=GaussPrior(mu=0, sigma=1.0),
                    # priors=GaussMixturePrior(mus=[0, 0], sigmas=[1.5, 0.1], pis=[0.5, 0.5]),
-                   priors=[prior_rho_1, prior_rho_2, prior_rho_3],
-                   dtype=X_.dtype
+                   # priors=['gard', 'gard', 'gard']
                    ).to(device)
 
     optimizer = optim.Adam(mlp.parameters(), lr=0.08)
 
     epochs = 1500
+    weight_kl = 1.0
     for epoch in range(epochs):
 
         yp, loss_kl = mlp(X_, sample=True)
         loss_ce = neg_log_likelihood(yp, y_)
-        loss = loss_ce + loss_kl
+        loss = loss_ce + weight_kl * loss_kl
 
         optimizer.zero_grad()
         loss.backward()
@@ -164,25 +142,28 @@ if __name__ == "__main__":
                   "KL Div: {:.4f} Total loss {:.4f}"
                   .format(epoch + 1, epochs, loss_ce.item(), loss_kl.item(), loss.item()))
 
-    X_test = np.linspace(-1.5, 1.5, 1000).reshape(-1, 1)
-    y_pred_list = []
 
-    X_test_ = torch.tensor(X_test, device=device)
-    for i in range(500):
-        y_pred, _ = mlp(X_test_, sample=True)
-        y_pred_list.append(y_pred.cpu().detach().numpy())
+    with torch.no_grad():
 
-    y_preds = np.concatenate(y_pred_list, axis=1)
+        X_test = np.linspace(-1.5, 1.5, 1000).reshape(-1, 1).astype(np.float32)
+        y_pred_list = []
 
-    y_mean = np.mean(y_preds, axis=1)
-    y_sigma = np.std(y_preds, axis=1)
+        X_test_ = torch.tensor(X_test, device=device)
+        for i in range(500):
+            y_pred, _ = mlp(X_test_, sample=True)
+            y_pred_list.append(y_pred.cpu().detach().numpy())
 
-    plt.plot(X_test, y_mean, 'r-', label='Predictive mean')
-    plt.scatter(X, y, marker='+', label='Training data')
-    plt.fill_between(X_test.ravel(),
-                     y_mean + 2 * y_sigma,
-                     y_mean - 2 * y_sigma,
-                     alpha=0.5, label='Epistemic uncertainty')
-    plt.title('Prediction')
-    plt.legend()
-    plt.show()
+        y_preds = np.concatenate(y_pred_list, axis=1)
+
+        y_mean = np.mean(y_preds, axis=1)
+        y_sigma = np.std(y_preds, axis=1)
+
+        plt.plot(X_test, y_mean, 'r-', label='Predictive mean')
+        plt.scatter(X, y, marker='+', label='Training data')
+        plt.fill_between(X_test.ravel(),
+                         y_mean + 2 * y_sigma,
+                         y_mean - 2 * y_sigma,
+                         alpha=0.5, label='Epistemic uncertainty')
+        plt.title('Prediction')
+        plt.legend()
+        plt.show()

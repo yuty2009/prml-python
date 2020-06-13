@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import torch
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from utils.cifarreader import *
-from deeplearning.cnn.cifarcnn_pytorch import *
+from deeplearning.gan.pytorch.pytorch.cifarcnn import *
 
 imsize = 32
 datapath = 'e:/prmldata/cifar-10/python'

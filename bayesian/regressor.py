@@ -165,8 +165,8 @@ def bgardreg(y, X, group):
     PHI = np.concatenate((np.ones([N, 1]), X), axis=1)
 
     if np.size(group) == 1:
-        PG = np.floor((P+1)/group).astype(int)  # number of feature per-group
-        group = np.ceil((np.arange(P)+1)/PG).astype(int)
+        PG = np.floor(P/group).astype(int)  # number of feature per-group
+        group = np.floor((np.arange(P))/PG).astype(int) + 1
     group = np.append([0], group) # account for bias
     groupid = np.unique(group)
     NG = len(groupid)

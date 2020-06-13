@@ -31,15 +31,15 @@ parser.add_argument("-w", "--weights", help=help_)
 args = parser.parse_args()
 
 x_dim = 784
-h_dims = [512, 512, 10]
+h_dims = [128, 84, 10]
 
 mlp = BayesMLP(input_dim=x_dim, hidden_dims=h_dims,
                acts=[nn.ReLU(inplace=True),
                      nn.ReLU(inplace=True),
                      None],
-               priors=[prior_laplace(mu=0, b=0.1),
-                       prior_laplace(mu=0, b=0.1),
-                       prior_gauss(mu=0, sigma=0.1)]).to(device)
+               priors=[GaussPrior(mu=0, sigma=0.5),
+                       GaussPrior(mu=0, sigma=0.5),
+                       GaussPrior(mu=0, sigma=0.5)]).to(device)
 
 optimizer = optim.Adam(mlp.parameters(), lr=1e-3)
 
@@ -52,27 +52,19 @@ if args.weights:
 else:
     # train
     n_samples = 5
-    epochs = 20
+    epochs = 10
     batch_size = 100
-    epoch_steps = np.ceil(trainset.num_examples / batch_size).astype('int')
+    num_batches = np.ceil(trainset.num_examples / batch_size).astype('int')
+    weight_kl = 1.0 / num_batches
     for epoch in range(epochs):
-        for step in range(epoch_steps):
+        for step in range(num_batches):
             X_batch, y_batch = trainset.next_batch(batch_size)
             X_batch = torch.tensor(X_batch, device=device)
             y_batch = torch.tensor(y_batch, device=device)
 
-            loss_ce = 0
-            loss_kl = 0
-            for i in range(n_samples):
-                yp_batch, tlqw, tlpw = mlp(X_batch, sample=True)
-                loss_ce_i = F.cross_entropy(yp_batch, y_batch.long(), reduction='sum')
-                loss_kl_i = (tlqw - tlpw)/epoch_steps
-                loss_ce = loss_ce + loss_ce_i
-                loss_kl = loss_kl + loss_kl_i
-
-            loss_ce = loss_ce/n_samples
-            loss_kl = loss_kl/n_samples
-            loss = loss_ce + loss_kl
+            yp_batch, loss_kl = mlp(X_batch, sample=True)
+            loss_ce = F.cross_entropy(yp_batch, y_batch.long(), reduction='sum')
+            loss = loss_ce * trainset.num_examples + weight_kl * loss_kl
 
             optimizer.zero_grad()
             loss.backward()
@@ -87,11 +79,9 @@ else:
                               loss_ce.item(), loss_kl.item(), loss.item()))
 
     torch.save({'state_dict': mlp.state_dict(), 'optimizer': optimizer.state_dict()},
-               'mnist_mlp_ckpt')
+               'mnist_bnn_ckpt')
 
 with torch.no_grad():
-
-    weights = mlp.get_weight_samples()
 
     loss_test = 0
     correct_test = 0
@@ -99,7 +89,8 @@ with torch.no_grad():
         X_batch, y_batch = testset.next_batch(1000)
         X_batch = torch.tensor(X_batch, device=device)
         y_batch = torch.tensor(y_batch, device=device)
-        yp_batch, _, _ = mlp.predict_mcmc(X_batch, n_samples=100)
+        yp_batch, _ = mlp(X_batch)
+        # yp_batch, _ = mlp.predict_mcmc(X_batch, n_samples=100)
         loss_test += F.cross_entropy(yp_batch, y_batch.long(), reduction='sum').item()
         # get the index of the max log-probability
         yp_batch = yp_batch.argmax(dim=1, keepdim=True)

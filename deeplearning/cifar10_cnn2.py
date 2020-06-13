@@ -2,7 +2,7 @@
 
 import matplotlib.pyplot as plt
 from utils.cifarreader import *
-from deeplearning.cnn.cifarcnn_keras import *
+from deeplearning.cnn.keras.cifarcnn import *
 
 imsize = 32
 datapath = 'e:/prmldata/cifar-10/python'

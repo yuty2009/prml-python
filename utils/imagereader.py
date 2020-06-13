@@ -153,6 +153,9 @@ class DataSet(object):
     def epochs_completed(self):
         return self._epochs_completed
 
+    def reset(self):
+        self._epochs_completed = 0
+
     def create(self, images, labels):
         return DataSet(images, labels,
                        needresize=self.needresize, newsize=self.newsize,

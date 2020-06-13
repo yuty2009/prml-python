@@ -172,8 +172,8 @@ def bgardlog(y, X, group):
     y[np.argwhere(y == -1)] = 0  # the class label should be[1 0]
 
     if np.size(group) == 1:
-        PG = np.floor((P + 1) / group).astype(int)  # number of feature per-group
-        group = np.ceil((np.arange(P) + 1) / PG).astype(int)
+        PG = np.floor(P/group).astype(int)  # number of feature per-group
+        group = np.floor(np.arange(P)/PG).astype(int) + 1
     group = np.append([0], group)  # account for bias
     groupid = np.unique(group)
     NG = len(groupid)
