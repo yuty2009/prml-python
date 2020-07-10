@@ -3,7 +3,7 @@
 import gzip
 import pickle
 import numpy as np
-from basic.classifier import *
+from basic.linear import *
 
 
 def main():
@@ -14,11 +14,13 @@ def main():
 
     X1 = np.concatenate((training_data[0], validation_data[0]), axis=0)
     y1 = np.concatenate((training_data[1], validation_data[1]), axis=0)
-    W = softmax_train(y1, X1)
+
+    model = SoftmaxClassifier()
+    W = model.fit(X1, y1)
 
     X21 = test_data[0]
     y21 = test_data[1]
-    y22, dummy = softmax_predict(X21, W)
+    y22, dummy = model.predict(X21)
     acc = np.mean(np.equal(y22, y21).astype(np.float32))
     print(acc)
 

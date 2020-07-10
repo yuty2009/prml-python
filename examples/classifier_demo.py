@@ -2,8 +2,8 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from basic.classifier import *
-from bayesian.classifier import *
+from basic.linear import *
+from bayesian.linear import *
 
 
 if __name__ == "__main__":
@@ -19,10 +19,14 @@ if __name__ == "__main__":
     y = np.concatenate((np.ones(N1), -1*np.ones(N2)))
 
     # train the model
-    W_lda, b_lda = FLDA(y, X)
-    W_log, b_log = logistic_sgd(y, X, 1e-4, AdamOptimizer())
-    # W_log, b_log = bayeslog(y, X)
-    # W_log, b_log = bardlog(y, X)
+    lda = LDAClassifier()
+    W_lda, b_lda = lda.fit(X, y)
+    logistic = LogisticRegression(optimizer=AdamOptimizer())
+    W_log, b_log = logistic.fit(X, y)
+    # bayeslog = BayesARDLogisticRegression(verbose=True)
+    # W_log, b_log = bayeslog.fit(X, y)
+    # bardlog = BayesARDLogisticRegression(verbose=True)
+    # W_log, b_log = bardlog.fit(X, y)
 
     y1 = np.sign(np.matmul(X1, W_lda) + b_lda)
     y2 = np.sign(np.matmul(X2, W_lda) + b_lda)

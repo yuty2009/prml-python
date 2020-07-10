@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from basic.regressor import *
-# from bayesian.regressor import *
+from basic.linear import *
+from bayesian.linear import *
 # from bayesian.pymc3 import *
-from bayesian.pytorch import *
+# from bayesian.pytorch import *
 from sklearn.linear_model import ARDRegression
 
 N = 256
@@ -29,9 +29,12 @@ ardr = ARDRegression()
 ardr.fit(X, y)
 w1 = ardr.coef_
 
-# w2, b2 = bayesreg(y, X)
-# w2, b2 = bardreg(y, X)
-w2, b2 = bgardreg(y, X, groups)
+# bayesreg = BayesLinearRegression(verbose=True)
+# w2, b2 = bayesreg.fit(X, y)
+# bardreg = BayesARDLinearRegression(verbose=True)
+# w2, b2 = bardreg.fit(X, y)
+bgardreg = BayesGARDLinearRegression(verbose=True)
+w2, b2 = bgardreg.fit(X, y, groups)
 
 # visualize
 plt.figure(1)

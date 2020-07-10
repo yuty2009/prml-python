@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
-## Least Square Regression with norm2 regularization
+#
+# Least Square Regression with norm2 regularization
 #
 # approximate y = sin(2*pi*[0:0.01:1]) by
 # y = w0 + w1*x + w2*x^2 + w3*x^3 + ...+ wn*x^n
 # min{ |y - t|^2 + lambda*w'*w }
-#
 
-import numpy as np
-import matplotlib.pyplot as plt
-from basic.regressor import *
-# from bayesian.regressor import *
+from basic.linear import *
+from bayesian.linear import *
 # from bayesian.pymc3 import *
-from bayesian.pytorch import *
+# from bayesian.pytorch import *
 
 def polybasis(x, order):
     vector = np.zeros([len(x),order+1]).astype(np.float32)
@@ -38,9 +36,12 @@ if __name__ == "__main__":
     PHI1 = polybasis(x1, order)
 
     # train the model
-    # w, b = ridgereg(y1, PHI1, 1e-4)
-    w, b = bayesreg(y1, PHI1, sigma)
-    # w, b = bardreg(y1, PHI1)
+    # ridgereg = RidgeRegression()
+    # w, b = ridgereg.fit(PHI1, y1)
+    # bayesreg = BayesLinearRegression()
+    # w, b = bayesreg.fit(PHI1, y1)
+    bardreg = BayesARDLinearRegression()
+    w, b = bardreg.fit(PHI1, y1)
 
     # generate testing samples
     perm2 = np.random.permutation(N)
@@ -56,6 +57,7 @@ if __name__ == "__main__":
     tp = np.matmul(PHIt, w) + b
 
     # visualization
+    import matplotlib.pyplot as plt
     plt.figure(1)
     plt.subplot(2, 1, 1)
     plt.plot(t, tt, '-r')

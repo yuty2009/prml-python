@@ -4,6 +4,7 @@ import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from abc import ABCMeta, abstractmethod
 
+
 class GradientDescentOptimizer(object):
     __metaclass__ = ABCMeta
 
@@ -13,9 +14,10 @@ class GradientDescentOptimizer(object):
 
 
 class AdagradOptimizer(GradientDescentOptimizer):
-    def __init__(self, maxit=500, stopeps=1e-6):
+    def __init__(self, maxit=500, stopeps=1e-6, verbose=False):
         self.maxit = maxit
         self.stopeps = stopeps
+        self.verbose = verbose
 
     def minimize(self, fobj, x0, args):
         alpha = 0.01 # initial learning rate
@@ -32,15 +34,18 @@ class AdagradOptimizer(GradientDescentOptimizer):
             v_t = v_t + g_t * g_t  # updates the sum of the squared gradient
             theta_0 = theta_0 - (alpha * g_t) / (np.sqrt(v_t) + epsilon) # updates the parameters
             d_theta = np.linalg.norm(theta_0 - theta_prev)
-            print('Iteration %d: FuncValue = %f, d_theta = %f' % (it, f_t, d_theta))
+            if self.verbose:
+                print('Iteration %d: FuncValue = %f, d_theta = %f' %
+                      (it, f_t, d_theta))
 
         return theta_0
 
 
 class RMSPropOptimizer(GradientDescentOptimizer):
-    def __init__(self, maxit=500, stopeps=1e-6):
+    def __init__(self, maxit=500, stopeps=1e-6, verbose=False):
         self.maxit = maxit
         self.stopeps = stopeps
+        self.verbose = verbose
 
     def minimize(self, fobj, x0, args):
         alpha = 0.01 # initial learning rate
@@ -59,15 +64,18 @@ class RMSPropOptimizer(GradientDescentOptimizer):
             v_t = beta_1 * v_t + (1 - beta_1) * (g_t * g_t)  # updates the moving averages of the squared gradient
             theta_0 = theta_0 - (alpha * g_t) / (np.sqrt(v_t) + epsilon)  # updates the parameters
             d_theta = np.linalg.norm(theta_0-theta_prev)
-            print('Iteration %d: FuncValue = %f, d_theta = %f' % (it, f_t, d_theta))
+            if self.verbose:
+                print('Iteration %d: FuncValue = %f, d_theta = %f' %
+                      (it, f_t, d_theta))
 
         return theta_0
 
 
 class AdamOptimizer(GradientDescentOptimizer):
-    def __init__(self, maxit=500, stopeps=1e-6):
+    def __init__(self, maxit=500, stopeps=1e-6, verbose=False):
         self.maxit = maxit
         self.stopeps = stopeps
+        self.verbose = verbose
 
     def minimize(self, fobj, x0, args):
         alpha = 0.01 # initial learning rate
@@ -90,16 +98,23 @@ class AdamOptimizer(GradientDescentOptimizer):
             v_cap = v_t / (1 - (beta_2 ** it))  # calculates the bias-corrected estimates
             theta_0 = theta_0 - (alpha * m_cap) / (np.sqrt(v_cap) + epsilon)  # updates the parameters
             d_theta = np.linalg.norm(theta_0-theta_prev)
-            print('Iteration %d: FuncValue = %f, d_theta = %f' % (it, f_t, d_theta))
+            if self.verbose:
+                print('Iteration %d: FuncValue = %f, d_theta = %f' %
+                      (it, f_t, d_theta))
 
         return theta_0
 
 
 class LbfgsOptimizer(GradientDescentOptimizer):
-    def __init__(self, maxit=500, stopeps=1e-5):
+    def __init__(self, maxit=500, stopeps=1e-5, verbose=False):
         self.maxit = maxit
         self.stopeps = stopeps
+        self.verbose = verbose
 
     def minimize(self, fobj, x0, args):
-        theta, obj, info = fmin_l_bfgs_b(fobj, x0, args=args, maxiter=self.maxit, epsilon=self.stopeps, disp=1)
+        theta, obj, info = fmin_l_bfgs_b(fobj, x0,
+                                         args=args,
+                                         maxiter=self.maxit,
+                                         epsilon=self.stopeps,
+                                         disp=self.verbose)
         return theta

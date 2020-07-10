@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from deeplearning.cnn.inception import *
+from deeplearning.cnn.pytorch.inception import *
 
 
 class Net(nn.Module):
