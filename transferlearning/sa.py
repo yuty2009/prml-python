@@ -5,7 +5,7 @@
 # domain adaptation using subspace alignment[C]//ICCV. 2013: 2960-2967.
 
 import numpy as np
-from basic.pca import PCA
+from basic.linear import PCA
 
 
 class SA(object):

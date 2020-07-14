@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from basic.linear import *
+# from basic.linear import *
 from bayesian.linear import *
 # from bayesian.pymc3 import *
-# from bayesian.pytorch import *
+from bayesian.pytorch import *
 from sklearn.linear_model import ARDRegression
 
 N = 256
