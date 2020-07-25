@@ -51,9 +51,9 @@ def onehot(labels, num_classes):
 
 
 ## Compute R square
-# y: N by 1 labels
 # X: N samples by [P1,P2,...,PN] features
-def rsquare(y, X):
+# y: N by 1 labels
+def rsquare(X, y):
     dims = X.shape
     NF = np.prod(dims[1:]).astype(int)
     rr = np.zeros(NF)

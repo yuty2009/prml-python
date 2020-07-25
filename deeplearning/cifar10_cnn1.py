@@ -4,7 +4,7 @@ import argparse
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from utils.cifarreader import *
-from deeplearning.gan.pytorch.pytorch.cifarcnn import *
+from deeplearning.cnn.pytorch.cifarcnn import *
 
 imsize = 32
 datapath = 'e:/prmldata/cifar-10/python'

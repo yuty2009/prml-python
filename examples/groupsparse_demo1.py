@@ -3,17 +3,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from basic.utils import *
-# from bayesian.regressor import *
-from bayesian.pymc3 import *
+# from bayesian.linear import *
+from bayesian.pytorch import *
+# from bayesian.pymc3 import *
 
 
 N = 256
 P = 1024 # feature dimension
-X = np.random.randn(N,P)
+X = np.random.randn(N,P).astype(np.float32)
 # designed weights
 NG = 32 # number of groups
-PG = np.floor(P/NG).astype(int) # number of feature per-group
-groups = np.floor(np.arange(P)/PG).astype(int) + 1
+PG = P // NG # number of feature per-group
+groups = np.arange(P) // PG + 1
 NSG = 10 # number of active groups
 perm = np.random.permutation(NG)
 actives = perm[:NSG] + 1
@@ -26,8 +27,10 @@ for i in range(NSG):
 sigma = 0.2
 y = np.dot(X, w0) + sigma*np.random.randn(N)
 
-w1, b1 = bardreg(y, X)
-w2, b2 = bgardreg(y, X, NG)
+bardreg = BayesARDLinearRegression()
+w1, b1 = bardreg.fit(X, y)
+bgardreg = BayesGARDLinearRegression()
+w2, b2 = bgardreg.fit(X, y, NG)
 
 # visualize
 plt.figure(1)

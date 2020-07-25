@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 # from basic.linear import *
 from bayesian.linear import *
 # from bayesian.pymc3 import *
-from bayesian.pytorch import *
+# from bayesian.pytorch import *
 from sklearn.linear_model import ARDRegression
 
 N = 256
@@ -11,8 +11,8 @@ P = 512 # feature dimension
 X = np.random.randn(N,P).astype(np.float32)
 # designed weights
 NG = 32 # number of groups
-PG = np.floor(P/NG).astype(int) # number of feature per-group
-groups = np.floor(np.arange(P)/PG).astype(int) + 1
+PG = P // NG # number of feature per-group
+groups = np.arange(P) // PG + 1
 NSG = 10 # number of active groups
 perm = np.random.permutation(NG)
 actives = perm[:NSG] + 1
@@ -33,7 +33,7 @@ w1 = ardr.coef_
 # w2, b2 = bayesreg.fit(X, y)
 # bardreg = BayesARDLinearRegression(verbose=True)
 # w2, b2 = bardreg.fit(X, y)
-bgardreg = BayesGARDLinearRegression(verbose=True)
+bgardreg = BayesGARDLinearRegression()
 w2, b2 = bgardreg.fit(X, y, groups)
 
 # visualize

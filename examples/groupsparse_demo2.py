@@ -3,7 +3,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from basic.utils import *
-from bayesian.classifier import *
+from bayesian.linear import *
 
 
 N1 = 128 # number of samples in class 1
@@ -15,8 +15,8 @@ X2 = np.random.randn(N2,P) - 10
 XRaw = np.concatenate((X1, X2), axis=0)
 # designed weights
 NG = 32 # number of groups
-PG = np.floor(P/NG).astype(int) # number of feature per-group
-groups = np.floor(np.arange(P)/PG).astype(int) + 1
+PG = P // NG # number of feature per-group
+groups = np.arange(P) // PG + 1
 NSG = 10 # number of active groups
 perm = np.random.permutation(NG)
 actives = perm[:NSG] + 1
@@ -34,10 +34,12 @@ perm = np.random.permutation(N)
 X = X0[perm,:]
 y = y0[perm]
 # calculate the discriminability of each feature
-rr = rsquare(y, X)
+rr = rsquare(X, y)
 
-w1, b1 = bardlog(y, X)
-w2, b2 = bgardlog(y, X, NG)
+bardlog = BayesARDLogisticRegression()
+w1, b1 = bardlog.fit(X, y)
+bgardlog = BayesGARDLogisticRegression()
+w2, b2 = bgardlog.fit(X, y, NG)
 
 # visualize
 plt.figure(1)

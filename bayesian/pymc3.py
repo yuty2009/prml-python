@@ -108,8 +108,8 @@ class BayesGARDLinearRegression(LinearModel):
 
         group = args
         if np.size(group) == 1:
-            PG = np.floor((P + 1) / group).astype(int)  # number of feature per-group
-            group = np.ceil((np.arange(P) + 1) / PG).astype(int)
+            PG = P // group  # number of feature per-group
+            group = np.arange(P) // PG + 1
         group = np.append([0], group)  # account for bias
         groupid = np.unique(group)
         NG = len(groupid)

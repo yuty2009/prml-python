@@ -81,7 +81,7 @@ class MaxPooling(object):
                         block = x[b, i:i + self.ksize, j:j + self.ksize, c]
                         value, index = np.max(block), np.argmax(block)
                         out[b, int(i / self.stride), int(j / self.stride), c] = value
-                        self.index[b, i + int(np.floor(index / self.stride)), j + index % self.stride, c] = 1
+                        self.index[b, i + index // self.stride, j + index % self.stride, c] = 1
         return out
 
     def backward(self, delta, A):
@@ -109,9 +109,9 @@ class StocasticPooling(object):
                     for j in range(0, x.shape[2], self.stride):
                         block = x[b, i:i + self.ksize, j:j + self.ksize, c]
                         index = np.random.randint(self.ksize*self.ksize)
-                        value = block[int(np.floor(index/self.stride)), index%self.stride]
+                        value = block[index//self.stride, index%self.stride]
                         out[b, int(i/self.stride), int(j/self.stride), c] = value
-                        self.index[b, i + int(np.floor(index/self.stride)), j + index%self.stride, c] = 1
+                        self.index[b, i + index//self.stride, j + index%self.stride, c] = 1
         return out
 
     def backward(self, delta, A):
