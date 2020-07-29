@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+import torch
+import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 # import torch.distributions as tfp
-from deeplearning.bnn.bayeslayers import *
+from bayesian.priors import *
 
 
 class LinearModel(object):
     __metaclass__ = ABCMeta
+
+    def __init__(self):
+        cuda = torch.cuda.is_available()
+        self.device = torch.device("cuda" if cuda else "cpu")
+        torch.cuda.manual_seed(42) if cuda else torch.manual_seed(42)
 
     @abstractmethod
     def fit(self, X, y=None, args=None):
@@ -27,31 +35,25 @@ class BayesLinearRegression(LinearModel):
     """
 
     def __init__(self, sigma=1.0, verbose=False):
+        super().__init__()
         self.sigma = sigma
         self.verbose = verbose
         self.w, self.b = None, 0
 
     def fit(self, X, y=None, args=None):
         N, P = X.shape
-
-        cuda = torch.cuda.is_available()
-        device = torch.device("cuda" if cuda else "cpu")
-        torch.manual_seed(42)
-        if cuda:
-            torch.cuda.manual_seed(42)
-
-        X = torch.tensor(X, device=device)
-        y = torch.tensor(y, device=device)
+        X = torch.tensor(X, device=self.device, dtype=torch.float32)
+        y = torch.tensor(y, device=self.device)
 
         # prior = tfp.Normal(loc=0.0, scale=1.0)
         # prior = LaplacePrior(mu=0, b=1.0)
         prior = GaussPrior(mu=0, sigma=1.0)
         # prior = GaussMixturePrior(mus=[0, 0], sigmas=[1.5, 0.1], pis=[0.5, 0.5])
 
-        w_mu = nn.Parameter(torch.empty(P, 1).normal_(0, 0.5).to(device))
-        b_mu = nn.Parameter(torch.empty(1).normal_(0, 0.5).to(device))
-        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu).to(device))
-        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu).to(device))
+        w_mu = nn.Parameter(torch.zeros((P, 1), device=self.device).normal_(0, 0.5))
+        b_mu = nn.Parameter(torch.zeros(1, device=self.device).normal_(0, 0.5))
+        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu, device=self.device))
+        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu, device=self.device))
 
         parameters = [w_mu, w_rho, b_mu, b_rho]
         optimizer = optim.Adam(parameters, lr=0.08)
@@ -101,29 +103,23 @@ class BayesARDLinearRegression(LinearModel):
     """
 
     def __init__(self, sigma=1.0, verbose=False):
+        super().__init__()
         self.sigma = sigma
         self.verbose = verbose
         self.w, self.b = None, 0
 
     def fit(self, X, y=None, args=None):
         N, P = X.shape
+        X = torch.tensor(X, device=self.device, dtype=torch.float32)
+        y = torch.tensor(y, device=self.device)
 
-        cuda = torch.cuda.is_available()
-        device = torch.device("cuda" if cuda else "cpu")
-        torch.manual_seed(42)
-        if cuda:
-            torch.cuda.manual_seed(42)
-
-        X = torch.tensor(X, device=device)
-        y = torch.tensor(y, device=device)
-
-        prior_w_rho = nn.Parameter(torch.zeros(P, 1, device=device))
+        prior_w_rho = nn.Parameter(torch.zeros(P, 1, device=self.device))
         prior_b = GaussPrior(0, 0.5)
 
-        w_mu = nn.Parameter(torch.empty(P, 1).normal_(0, 0.5).to(device))
-        b_mu = nn.Parameter(torch.empty(1).normal_(0, 0.5).to(device))
-        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu).to(device))
-        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu).to(device))
+        w_mu = nn.Parameter(torch.zeros((P, 1), device=self.device).normal_(0, 0.5))
+        b_mu = nn.Parameter(torch.zeros(1, device=self.device).normal_(0, 0.5))
+        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu, device=self.device))
+        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu, device=self.device))
 
         parameters = [w_mu, w_rho, b_mu, b_rho, prior_w_rho]
         optimizer = optim.Adam(parameters, lr=0.08)
@@ -180,21 +176,15 @@ class BayesGARDLinearRegression(LinearModel):
     """
 
     def __init__(self, sigma=1.0, verbose=False):
+        super().__init__()
         self.sigma = sigma
         self.verbose = verbose
         self.w, self.b = None, 0
 
     def fit(self, X, y=None, args=None):
         N, P = X.shape
-
-        cuda = torch.cuda.is_available()
-        device = torch.device("cuda" if cuda else "cpu")
-        torch.manual_seed(42)
-        if cuda:
-            torch.cuda.manual_seed(42)
-
-        X = torch.tensor(X, device=device)
-        y = torch.tensor(y, device=device)
+        X = torch.tensor(X, device=self.device, dtype=torch.float32)
+        y = torch.tensor(y, device=self.device)
 
         group = args
         if np.size(group) == 1:
@@ -203,13 +193,13 @@ class BayesGARDLinearRegression(LinearModel):
         groupid = np.unique(group)
         NG = len(groupid)
 
-        prior_w_rho = nn.Parameter(torch.zeros(NG, 1, device=device))
+        prior_w_rho = nn.Parameter(torch.zeros(NG, 1, device=self.device))
         prior_b = GaussPrior(0, 0.5)
 
-        w_mu = nn.Parameter(torch.empty(P, 1).normal_(0, 0.5).to(device))
-        b_mu = nn.Parameter(torch.empty(1).normal_(0, 0.5).to(device))
-        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu).to(device))
-        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu).to(device))
+        w_mu = nn.Parameter(torch.zeros((P, 1), device=self.device).normal_(0, 0.5))
+        b_mu = nn.Parameter(torch.zeros(1, device=self.device).normal_(0, 0.5))
+        w_rho = nn.Parameter(-3 * torch.ones_like(w_mu, device=self.device))
+        b_rho = nn.Parameter(-3 * torch.ones_like(b_mu, device=self.device))
 
         parameters = [w_mu, w_rho, b_mu, b_rho, prior_w_rho]
         optimizer = optim.Adam(parameters, lr=0.08)

@@ -12,11 +12,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class Conv2d_BN_ReLU(nn.Sequential):
+class ConvBNReLU(nn.Sequential):
     def __init__(self, in_planes, out_planes, kernel_size=3,
                  stride=1, groups=1):
         padding = (kernel_size - 1) // 2
-        super(Conv2d_BN_ReLU, self).__init__(
+        super(ConvBNReLU, self).__init__(
             nn.Conv2d(in_planes, out_planes, kernel_size,
                       stride, padding, groups=groups, bias=False),
             nn.BatchNorm2d(out_planes),
@@ -28,10 +28,10 @@ class DepthWise(nn.Sequential):
     def __init__(self, in_planes, out_planes, stride=1):
         super(DepthWise, self).__init__(
             # depthwise
-            Conv2d_BN_ReLU(in_planes, in_planes, kernel_size=3,
+            ConvBNReLU(in_planes, in_planes, kernel_size=3,
                            stride=stride, groups=in_planes),
             # pointwise
-            Conv2d_BN_ReLU(in_planes, out_planes, kernel_size=1)
+            ConvBNReLU(in_planes, out_planes, kernel_size=1)
         )
 
 
@@ -48,11 +48,11 @@ class InvertedResidual(nn.Module):
         if expand_ratio != 1:
             # pointwise
             layers.append(
-                Conv2d_BN_ReLU(in_planes, hidden_planes, kernel_size=1)
+                ConvBNReLU(in_planes, hidden_planes, kernel_size=1)
             )
         layers.extend([
             # depthwise
-            Conv2d_BN_ReLU(hidden_planes, hidden_planes, kernel_size=3,
+            ConvBNReLU(hidden_planes, hidden_planes, kernel_size=3,
                            stride=stride, groups=hidden_planes),
             # pointwise-linear
             nn.Conv2d(hidden_planes, out_planes, kernel_size=1,
@@ -77,7 +77,7 @@ class MobileNet_v1(nn.Module):
 
     def __init__(self, num_classes=10):
         super(MobileNet_v1, self).__init__()
-        self.conv1 = Conv2d_BN_ReLU(3, 32, kernel_size=3)
+        self.conv1 = ConvBNReLU(3, 32, kernel_size=3)
         self.features = self._make_layers(in_planes=32)
         self.classifer = nn.Linear(1024, num_classes)
 
@@ -117,7 +117,7 @@ class MobileNet_v2(nn.Module):
         in_planes = 32
         out_planes = 1280
         # building first layer
-        self.conv1 = Conv2d_BN_ReLU(3, 32, kernel_size=3)
+        self.conv1 = ConvBNReLU(3, 32, kernel_size=3)
         # building inverted residual blocks
         self.features = self._make_layers(in_planes, out_planes)
         # building classifier

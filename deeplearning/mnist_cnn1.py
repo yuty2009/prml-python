@@ -14,6 +14,8 @@ f_test_labels = 'e:/prmldata/mnist/t10k-labels-idx1-ubyte'
 
 imsize = 28
 mnist = MNISTReader(f_train_images, f_train_labels, f_test_images, f_test_labels)
+# trainset = mnist.get_train_dataset()
+# testset = mnist.get_test_dataset()
 trainset = mnist.get_train_dataset(onehot_label=False,
                                    reshape=True, new_shape=(-1, imsize, imsize, 1),
                                    tranpose=True, new_pos=(0, 3, 1, 2))
@@ -29,18 +31,27 @@ help_ = "Load model checkpoints"
 parser.add_argument("-w", "--weights", help=help_)
 args = parser.parse_args()
 
-cnn = LeNet5(num_classes=10).to(device)
-optimizer = optim.Adam(cnn.parameters(), lr=1e-3)
+
+class Softmax(nn.Sequential):
+    def __init__(self, num_features, num_classes=10):
+        super(Softmax, self).__init__(
+            nn.Linear(num_features, num_classes)
+        )
+
+
+# model = Softmax(imsize*imsize, 10).to(device)
+model = LeNet5(num_classes=10).to(device)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 if args.weights:
     print('=> loading checkpoint %s' % args.weights)
     checkpoint = torch.load(args.weights)
-    cnn.load_state_dict(checkpoint['state_dict'])
+    model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer'])
     print('=> loaded checkpoint %s' % args.weights)
 else:
     # train
-    epochs = 50
+    epochs = 20
     batch_size = 100
     epoch_steps = np.ceil(trainset.num_examples/batch_size).astype('int')
     for epoch in range(epochs):
@@ -49,7 +60,7 @@ else:
             X_batch = torch.tensor(X_batch, device=device)
             y_batch = torch.tensor(y_batch, device=device)
 
-            yp_batch = cnn(X_batch)
+            yp_batch = model(X_batch)
             loss = F.cross_entropy(yp_batch, y_batch.long(), reduction='sum')
 
             optimizer.zero_grad()
@@ -63,7 +74,7 @@ else:
                               (step + 1) * batch_size, trainset.num_examples,
                               loss.item()))
 
-    torch.save({'state_dict': cnn.state_dict(), 'optimizer': optimizer.state_dict()},
+    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()},
                'cnn_mnist_ckpt')
 
 with torch.no_grad():
@@ -73,7 +84,7 @@ with torch.no_grad():
         X_batch, y_batch = testset.next_batch(1000)
         X_batch = torch.tensor(X_batch, device=device)
         y_batch = torch.tensor(y_batch, device=device)
-        yp_batch = cnn(X_batch)
+        yp_batch = model(X_batch)
         loss_test += F.nll_loss(yp_batch, y_batch.long(), reduction='sum').item()
         # get the index of the max log-probability
         yp_batch = yp_batch.argmax(dim=1, keepdim=True)

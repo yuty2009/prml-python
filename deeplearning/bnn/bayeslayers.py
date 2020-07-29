@@ -45,9 +45,6 @@ class BayesLinear(nn.Module):
         if self.use_bias:
             self.b_mu = nn.Parameter(torch.zeros(out_features))
             self.b_rho = nn.Parameter(torch.zeros_like(self.b_mu))
-        else:
-            self.register_parameter('b_mu', None)
-            self.register_parameter('b_rho', None)
 
         self.reset_parameters()
 
@@ -111,7 +108,7 @@ class BayesConv2d(nn.Module):
                 self.prior_b_rho = nn.Parameter(torch.zeros(out_channels))
             elif prior.lower() == 'gard' or prior.lower == 'groupard':
                 # grouped by input channel which will lead to a feature selector
-                self.prior_w_rho = nn.Parameter(torch.zeros(1, in_channels))
+                self.prior_w_rho = nn.Parameter(torch.zeros(1, in_channels // groups))
                 self.prior_b_rho = nn.Parameter(torch.zeros(out_channels))
         else:
             assert 'Unknown prior'
@@ -122,9 +119,6 @@ class BayesConv2d(nn.Module):
         if self.use_bias:
             self.b_mu = nn.Parameter(torch.zeros(out_channels))
             self.b_rho = nn.Parameter(torch.zeros_like(self.b_mu))
-        else:
-            self.register_parameter('b_mu', None)
-            self.register_parameter('b_rho', None)
 
         self.reset_parmeters()
 

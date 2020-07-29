@@ -10,7 +10,7 @@ from bayesian.pytorch import *
 
 N = 256
 P = 1024 # feature dimension
-X = np.random.randn(N,P).astype(np.float32)
+X = np.random.randn(N,P)
 # designed weights
 NG = 32 # number of groups
 PG = P // NG # number of feature per-group

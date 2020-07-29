@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from basic.linear import *
+from basic.pytorch import *
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 
