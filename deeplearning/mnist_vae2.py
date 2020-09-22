@@ -7,13 +7,9 @@ from keras.utils import plot_model
 from utils.mnistreader import *
 from deeplearning.vae.vae_keras import *
 
-f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
-f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'
-f_test_images = 'e:/prmldata/mnist/t10k-images-idx3-ubyte'
-f_test_labels = 'e:/prmldata/mnist/t10k-labels-idx1-ubyte'
-
 imsize = 28
-mnist = MNISTReader(f_train_images, f_train_labels, f_test_images, f_test_labels)
+datapath = 'e:/prmldata/mnist/'
+mnist = MNISTReader(datapath=datapath)
 # for MLP based VAE
 # trainset = mnist.get_train_dataset()
 # testset = mnist.get_test_dataset()

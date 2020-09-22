@@ -45,6 +45,9 @@ class BayesLinear(nn.Module):
         if self.use_bias:
             self.b_mu = nn.Parameter(torch.zeros(out_features))
             self.b_rho = nn.Parameter(torch.zeros_like(self.b_mu))
+        else:
+            self.register_parameter('b_mu', None)
+            self.register_parameter('b_rho', None)
 
         self.reset_parameters()
 
@@ -119,6 +122,9 @@ class BayesConv2d(nn.Module):
         if self.use_bias:
             self.b_mu = nn.Parameter(torch.zeros(out_channels))
             self.b_rho = nn.Parameter(torch.zeros_like(self.b_mu))
+        else:
+            self.register_parameter('b_mu', None)
+            self.register_parameter('b_rho', None)
 
         self.reset_parmeters()
 

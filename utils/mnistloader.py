@@ -6,17 +6,18 @@ import struct
 import numpy as np
 from torch.utils.data import Dataset
 
-f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
-f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'
-f_test_images = 'e:/prmldata/mnist/t10k-images-idx3-ubyte'
-f_test_labels = 'e:/prmldata/mnist/t10k-labels-idx1-ubyte'
+datapath = 'e:/prmldata/mnist/'
+F_TRAIN_IMAGES = 'train-images-idx3-ubyte'
+F_TRAIN_LABELS = 'train-labels-idx1-ubyte'
+F_TEST_IMAGES = 't10k-images-idx3-ubyte'
+F_TEST_LABELS = 't10k-labels-idx1-ubyte'
 
 
 class MNISTTrainset(Dataset):
     def __init__(self):
         reader = MNISTReader()
-        self.X = reader.read_raw_images(f_train_images)
-        self.y = reader.read_raw_labels(f_train_labels)
+        self.X = reader.read_raw_images(datapath + F_TRAIN_IMAGES)
+        self.y = reader.read_raw_labels(datapath + F_TRAIN_LABELS)
         self.X = self.X.astype('float32') / 255.
         self.X = np.reshape(self.X, (-1, 28, 28, 3))
         self.X = self.X.transpose((0, 3, 1, 2))
@@ -34,8 +35,8 @@ class MNISTTrainset(Dataset):
 class MNISTTestset(Dataset):
     def __init__(self):
         reader = MNISTReader()
-        self.X = reader.read_raw_images(f_test_images)
-        self.y = reader.read_raw_labels(f_test_labels)
+        self.X = reader.read_raw_images(datapath + F_TEST_IMAGES)
+        self.y = reader.read_raw_labels(datapath + F_TEST_LABELS)
         self.X = self.X.astype('float32') / 255.
         self.X = np.reshape(self.X, (-1, 28, 28, 3))
         self.X = self.X.transpose((0, 3, 1, 2))

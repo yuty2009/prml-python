@@ -9,10 +9,10 @@ datapath = 'e:/prmldata/cifar-10/python'
 cifar = CIFARReader(datapath, num_classes = 10)
 trainset = cifar.get_train_dataset(onehot_label=True,
                                    reshape=True, new_shape=(-1, 3, imsize, imsize),
-                                   tranpose=True, new_pos=(0, 2, 3, 1))
+                                   transpose=True, new_pos=(0, 2, 3, 1))
 testset = cifar.get_test_dataset(onehot_label=True,
                                  reshape=True, new_shape=(-1, 3, imsize, imsize),
-                                 tranpose=True, new_pos=(0, 2, 3, 1))
+                                 transpose=True, new_pos=(0, 2, 3, 1))
 label_names = cifar.get_label_names()
 X_train, y_train = trainset.images, trainset.labels
 X_test, y_test = testset.images, testset.labels

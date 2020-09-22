@@ -8,13 +8,9 @@ import matplotlib.pyplot as plt
 from utils.mnistreader import *
 from deeplearning.vae.vae_pytorch import *
 
-f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
-f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'
-f_test_images = 'e:/prmldata/mnist/t10k-images-idx3-ubyte'
-f_test_labels = 'e:/prmldata/mnist/t10k-labels-idx1-ubyte'
-
 imsize = 28
-mnist = MNISTReader(f_train_images, f_train_labels, f_test_images, f_test_labels)
+datapath = 'e:/prmldata/mnist/'
+mnist = MNISTReader(datapath=datapath)
 # for MLP based VAE
 trainset = mnist.get_train_dataset()
 testset = mnist.get_test_dataset()
@@ -22,10 +18,10 @@ testset = mnist.get_test_dataset()
 # for convolutional VAE
 # trainset = mnist.get_train_dataset(onehot_label=True,
 #                                    reshape=True, new_shape=(-1, imsize, imsize, 1),
-#                                    tranpose=True, new_pos=(0, 3, 1, 2))
+#                                    transpose=True, new_pos=(0, 3, 1, 2))
 # testset = mnist.get_test_dataset(onehot_label=True,
 #                                  reshape=True, new_shape=(-1, imsize, imsize, 1),
-#                                  tranpose=True, new_pos=(0, 3, 1, 2))
+#                                  transpose=True, new_pos=(0, 3, 1, 2))
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda" if cuda else "cpu")

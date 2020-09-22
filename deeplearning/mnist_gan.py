@@ -6,22 +6,17 @@ from torchvision.utils import save_image
 from utils.mnistreader import *
 from deeplearning.gan.pytorch.dcgan import *
 
-os.makedirs("images", exist_ok=True)
-f_train_images = 'e:/prmldata/mnist/train-images-idx3-ubyte'
-f_train_labels = 'e:/prmldata/mnist/train-labels-idx1-ubyte'
-f_test_images = 'e:/prmldata/mnist/t10k-images-idx3-ubyte'
-f_test_labels = 'e:/prmldata/mnist/t10k-labels-idx1-ubyte'
-
 imsize = 28
-mnist = MNISTReader(f_train_images, f_train_labels, f_test_images, f_test_labels)
+datapath = 'e:/prmldata/mnist/'
+mnist = MNISTReader(datapath=datapath)
 trainset = mnist.get_train_dataset(onehot_label=False,
                                    normalize=True, mean_std=(0.5, 0.5),
                                    reshape=True, new_shape=(-1, imsize, imsize, 1),
-                                   tranpose=True, new_pos=(0, 3, 1, 2))
+                                   transpose=True, new_pos=(0, 3, 1, 2))
 testset = mnist.get_test_dataset(onehot_label=False,
                                  normalize=True, mean_std=(0.5, 0.5),
                                  reshape=True, new_shape=(-1, imsize, imsize, 1),
-                                 tranpose=True, new_pos=(0, 3, 1, 2))
+                                 transpose=True, new_pos=(0, 3, 1, 2))
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda" if cuda else "cpu")
@@ -37,6 +32,7 @@ args = parser.parse_args()
 
 latent_dim = 100
 model = DCGAN(image_shape=(1, imsize, imsize), latent_dim=latent_dim).to(device)
+os.makedirs("images", exist_ok=True)
 
 if args.weights:
     print('=> loading checkpoint %s' % args.weights)

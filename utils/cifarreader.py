@@ -15,7 +15,7 @@ class CIFARReader(object):
 
     def get_train_dataset(self, onehot_label=False, scale=True,
                           reshape=False, new_shape=(-1, 32, 32, 3),
-                          tranpose=False, new_pos=(0, 1, 2, 3)):
+                          transpose=False, new_pos=(0, 1, 2, 3)):
         train_images = []
         train_labels = []
         for i in range(5):
@@ -29,7 +29,7 @@ class CIFARReader(object):
             train_images = train_images.astype('float32') / 255.
         if reshape:
             train_images = np.reshape(train_images, new_shape)
-        if tranpose:
+        if transpose:
             train_images = train_images.transpose(new_pos)
         if onehot_label:
             train_labels = onehot_labels(train_labels, self.num_classes)
@@ -40,14 +40,14 @@ class CIFARReader(object):
 
     def get_test_dataset(self, onehot_label=False, scale=True,
                           reshape=False, new_shape=(-1, 32, 32, 3),
-                          tranpose=False, new_pos=(0, 1, 2, 3)):
+                          transpose=False, new_pos=(0, 1, 2, 3)):
         f_batch = os.path.join(self.datapath, 'test_batch')
         test_images, test_labels = self.get_batch_data(f_batch)
         if scale:
             test_images = test_images.astype('float32') / 255.
         if reshape:
             test_images = np.reshape(test_images, new_shape)
-        if tranpose:
+        if transpose:
             test_images = test_images.transpose(new_pos)
         if onehot_label:
             test_labels = onehot_labels(test_labels, self.num_classes)

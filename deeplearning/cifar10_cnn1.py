@@ -28,8 +28,7 @@ plt.figure(figsize=(10, 10))
 plt.imshow(figure)
 plt.show()
 
-cuda = torch.cuda.is_available()
-device = torch.device("cuda" if cuda else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser()
 help_ = "Load h5 model trained weights"

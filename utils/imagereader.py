@@ -6,26 +6,28 @@ import glob
 import numpy as np
 from PIL import Image
 
-def load_imagedata(imagepath, needresize=False, newsize=[],
-                   dtype=np.float32, vectorize=True, grayscale=True):
+
+def load_imagedata(imagepath, scale=True, vectorize=True, grayscale=True,
+                   resize=False, new_size=None,
+                   transpose=False, new_pos=(0, 1, 2, 3)):
     imagedata = []
     # in-memory bytes of image file content
     if isinstance(imagepath, bytes):
-        img = read_image(imagepath, needresize=needresize, newsize=newsize, grayscale=grayscale)
+        img = read_image(imagepath, resize=resize, new_size=new_size, grayscale=grayscale)
         imagedata.append(img)
     # ndarray imagelist
     elif not isinstance(imagepath, str):
         for filepath in imagepath:
-            img = read_image(filepath, needresize=needresize, newsize=newsize, grayscale=grayscale)
+            img = read_image(filepath, resize=resize, new_size=new_size, grayscale=grayscale)
             imagedata.append(img)
     # one single imagepath
     elif os.path.isfile(imagepath):
-        img = read_image(imagepath, needresize=needresize, newsize=newsize, grayscale=grayscale)
+        img = read_image(imagepath, resize=resize, new_size=new_size, grayscale=grayscale)
         imagedata.append(img)
     # image directory
     elif os.path.isdir(imagepath):
         for filepath in glob.glob(imagepath + "/*.jpg"):
-            img = read_image(filepath, needresize=needresize, newsize=newsize, grayscale=grayscale)
+            img = read_image(filepath, resize=resize, new_size=new_size, grayscale=grayscale)
             imagedata.append(img)
 
     imagedata = np.asarray(imagedata)
@@ -34,14 +36,15 @@ def load_imagedata(imagepath, needresize=False, newsize=[],
         imagedata = np.expand_dims(imagedata, 3)
     if vectorize:
         imagedata = imagedata.reshape(imagedata.shape[0], np.prod(imagedata.shape[1:]))
-    if (imagedata.dtype != np.float32) and (dtype == np.float32):
-        # Convert from [0, 255] -> [0.0, 1.0].
-        imagedata = imagedata.astype(np.float32)
-        imagedata = np.multiply(imagedata, 1.0 / 255.0)
+    if scale:
+        imagedata = imagedata.astype(np.float32) / 255.0
+    if transpose:
+        imagedata = imagedata.transpose(new_pos)
 
     return imagedata
 
-def read_image(imagepath, needresize=False, newsize=[], grayscale=True):
+
+def read_image(imagepath, resize=False, new_size=None, grayscale=True):
     if isinstance(imagepath, bytes):
         thepath = io.BytesIO()
         thepath.write(imagepath)
@@ -53,9 +56,10 @@ def read_image(imagepath, needresize=False, newsize=[], grayscale=True):
         im = Image.open(thepath).convert('L')
     else:
         im = Image.open(thepath)
-    if needresize:
-        im = im.resize(tuple(newsize), Image.BILINEAR)
+    if resize:
+        im = im.resize(tuple(new_size), Image.BILINEAR)
     return np.asarray(im)
+
 
 def onehot_labels(labels, num_classes):
     num_labels = labels.shape[0]
@@ -64,6 +68,7 @@ def onehot_labels(labels, num_classes):
     labels_onehot.flat[index_offset + labels.ravel()] = 1
     return labels_onehot
 
+
 def show(image):
     if isinstance(image, str):
         im = Image.open(image)
@@ -71,15 +76,16 @@ def show(image):
     else:
         img = image
 
-    from matplotlib import pyplot
-    import matplotlib as mpl
-    fig = pyplot.figure()
+    import matplotlib.pyplot as plt
+    fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
-    imgplot = ax.imshow(img)
+    imgplot = ax.imshow(img.squeeze())
     imgplot.set_interpolation('nearest')
     ax.xaxis.set_ticks_position('top')
     ax.yaxis.set_ticks_position('left')
-    pyplot.show()
+    if isinstance(image, str): plt.title(image)
+    plt.show()
+
 
 def ascii_show(image):
     if isinstance(image, str):
@@ -94,36 +100,38 @@ def ascii_show(image):
             row += '{0: <4}'.format(x)
         print(row)
 
+
 def rgb2gray(rgb):
     return np.dot(rgb[..., :3], [0.299, 0.587, 0.114])
 
 
 class DataSet(object):
-    def __init__(self, images, labels, needresize=False, newsize=None,
-                 dtype=np.float32, vectorize=True, grayscale=True,
+    def __init__(self, images, labels,
+                 scale=True, vectorize=True, grayscale=True,
+                 resize=False, new_size=None,
+                 transpose=False, new_pos=(0, 1, 2, 3),
                  readonload=False, readalready=False):
 
-        if newsize is None:
-            newsize = []
-        if dtype not in (np.uint8, np.float32):
-            raise TypeError('Invalid image dtype %r, expected uint8 or float32' % dtype)
-
         assert images.shape[0] == labels.shape[0], (
-            'images.shape: %s labels.shape: %s' % (images.shape, labels.shape))
+                'images.shape: %s labels.shape: %s' % (images.shape, labels.shape))
+
         self._num_examples = images.shape[0]
         self._shape = images.shape
 
-        self.needresize = needresize
-        self.newsize = newsize
-        self.dtype = dtype
+        self.scale = scale
         self.vectorize = vectorize
         self.grayscale = grayscale
+        self.resize = resize
+        self.new_size = new_size
+        self.transpose = transpose
+        self.new_pos = new_pos
         self.readonload = readonload
         self.readalready = readalready
 
         if (not self.readalready) and self.readonload:
-            self._images = load_imagedata(images, needresize=needresize, newsize=newsize,
-                                          dtype=dtype, vectorize=vectorize, grayscale=grayscale)
+            self._images = load_imagedata(images, scale=scale, vectorize=vectorize, grayscale=grayscale,
+                                          resize=resize, new_size=new_size,
+                                          transpose=transpose, new_pos=new_pos)
             self.readalready = True
         else:
             self._images = images
@@ -132,6 +140,10 @@ class DataSet(object):
         self._indices = np.arange(self._num_examples)
         self._epochs_completed = 0
         self._index_in_epoch = 0
+        self._num_folds = 10  # 10-fold cross-validation default
+        self._num_examples_fold = self._num_examples // self._num_folds
+        self._folds_completed = 0
+        self._fold = 0
 
     @property
     def images(self):
@@ -153,13 +165,22 @@ class DataSet(object):
     def epochs_completed(self):
         return self._epochs_completed
 
+    @property
+    def folds_completed(self):
+        return self._folds_completed
+
+    def set_num_folds(self, num_folds):
+        self._num_folds = num_folds
+        self._num_examples_fold = self._num_examples // self._num_folds
+
     def reset(self):
         self._epochs_completed = 0
 
     def create(self, images, labels):
         return DataSet(images, labels,
-                       needresize=self.needresize, newsize=self.newsize,
-                       dtype=self.dtype, vectorize=self.vectorize, grayscale=self.grayscale,
+                       scale=self.scale, vectorize=self.vectorize, grayscale=self.grayscale,
+                       resize=self.resize, new_size=self.new_size,
+                       transpose=self.transpose, new_pos=self.new_pos,
                        readonload=self.readonload, readalready=self.readalready)
 
     def shuffle(self):
@@ -172,8 +193,9 @@ class DataSet(object):
             subimages = self._images[indices]
         else:
             subimages = load_imagedata(self._images[indices],
-                           needresize=self.needresize, newsize=self.newsize,
-                           dtype=self.dtype, vectorize=self.vectorize, grayscale=self.grayscale)
+                                       scale=self.scale, vectorize=self.vectorize, grayscale=self.grayscale,
+                                       resize=self.resize, new_size=self.new_size,
+                                       transpose=self.transpose, new_pos=self.new_pos)
         sublabels = self._labels[indices]
         return subimages, sublabels
 
@@ -184,7 +206,7 @@ class DataSet(object):
         ends = np.cumsum(num_each)
         ends[-1] = num_total
         starts = np.copy(ends)
-        starts[1:]  = starts[0:-1]
+        starts[1:] = starts[0:-1]
         starts[0] = 0
         if shuffle: self.shuffle()
         subsets = []
@@ -212,3 +234,18 @@ class DataSet(object):
             end = self._index_in_epoch
         indices_portion = self._indices[start:end]
         return self.get_portiondata(indices_portion)
+
+    def next_fold(self, shuffle=True):
+        """Generate train set and test set for K-fold cross-validation"""
+        start = self._fold
+        # Shuffle for the first epoch
+        if start == 0 and shuffle:
+            self.shuffle()
+        indices_test = self._indices[self._fold * self._num_examples_fold:
+                                     (self._fold + 1) * self._num_examples_fold]
+        indices_train = np.setdiff1d(self._indices, indices_test)
+        self._fold += 1
+        if self._fold >= self._num_folds:
+            self._fold = 0
+        return self.get_portiondata(indices_train) + \
+               self.get_portiondata(indices_test)
