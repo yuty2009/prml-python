@@ -11,6 +11,7 @@ from bayesian.linear import *
 # from bayesian.pymc3 import *
 # from bayesian.pytorch import *
 
+
 def polybasis(x, order):
     vector = np.zeros([len(x),order+1]).astype(np.float32)
     for i in range(order+1):

@@ -27,8 +27,8 @@ for i in range(NSG):
 sigma = 0.2
 y = np.dot(X, w0) + sigma*np.random.randn(N)
 
-bardreg = BayesARDLinearRegression()
-w1, b1 = bardreg.fit(X, y)
+bayesreg = BayesLinearRegression()
+w1, b1 = bayesreg.fit(X, y)
 bgardreg = BayesGARDLinearRegression()
 w2, b2 = bgardreg.fit(X, y, NG)
 

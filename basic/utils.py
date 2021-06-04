@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import string
+import unicodedata
 import numpy as np
 
 
@@ -92,6 +94,17 @@ def myeig(X):
     return d
 
 
+# Turn a Unicode string to plain ASCII, thanks to https://stackoverflow.com/a/518232/2809427
+def unicode_to_ascii(s):
+    all_letters = string.ascii_letters + " .,;'"
+    n_letters = len(all_letters)
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+        and c in all_letters
+    )
+
+
 if __name__ == "__main__":
     a = np.random.rand(5)
     A = sparse(range(5), range(5), a)
@@ -101,7 +114,7 @@ if __name__ == "__main__":
     Z2 = np.linalg.inv(A+np.matmul(np.matmul(X,np.linalg.inv(D)),X.T))
 
     b = np.random.randn(4, 3)
-    d1, v1 = np.linalg.eig(np.dot(a.T, a))
-    d2 = myeig(a)
+    d1, v1 = np.linalg.eig(np.dot(b.T, b))
+    d2 = myeig(b)
 
-    pass
+    print(unicode_to_ascii('Ślusàrski'))
