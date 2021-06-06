@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 
-import math
 import numpy as np
 
 
 def nmodeprod(X, M, n):
     """
-    Calculates the n-Mode Product of a Tensor X and a Matrix M
+    Calculates the n-Mode Product of a Tensor X with a Matrix M
     B = nmodeprod(X, M, n)
     B = X (x)_n M .. According to the Definition in De Lathauwer (2000)
     with:
