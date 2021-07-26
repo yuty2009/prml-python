@@ -43,9 +43,10 @@ def nmodeprod(X, M, n):
 if __name__ == "__main__":
 
     from PIL import Image
+    import scipy.signal as sig
     import matplotlib.pyplot as plt
 
-    imfile = 'basic/rice.png'
+    imfile = '.data/rice.png'
     im = Image.open(imfile)
     im = np.asarray(im)
     im = im.astype(np.float32) / 255.0
@@ -63,9 +64,31 @@ if __name__ == "__main__":
     imgrady = nmodeprod(im, gradmat, 0)
     imgradxy = nmodeprod(nmodeprod(im, gradmat, 1), gradmat, 0)
 
-    plt.figure()
+    plt.figure(1)
     ax = plt.subplot(221); ax.imshow(im)
     ax = plt.subplot(222); ax.imshow(imgradx)
     ax = plt.subplot(223); ax.imshow(imgrady)
     ax = plt.subplot(224); ax.imshow(imgradxy)
+
+    gradmatx1 = [[-1, 1]]
+    gradmaty1 = [[-1], [1]]
+    gradmatxy1 = [[-1, 1], [1, -1]]
+    # gradmatx1 = [[-1, 0, 1]]
+    # gradmaty1 = [[-1], [0], [1]]
+    # gradmatxy1 = [[-1, 0, 1], [0, 0, 0], [1, 0, -1]]
+    # gradmatxy1 = [[0, -1, 0], [-1, 4, -1], [0, -1, 0]]
+    # gradmatxy1 = [[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]]
+    imgradx1 = sig.convolve2d(im, gradmatx1, mode='valid')
+    imgrady1 = sig.convolve2d(im, gradmaty1, mode='valid')
+    imgradxy1 = sig.convolve2d(im, gradmatxy1, mode='valid')
+
+    imgradx2 = im[:, :-1] - im[:, 1:]
+    imgrady2 = im[:-1, :] - im[1:, :]
+
+    plt.figure(2)
+    ax = plt.subplot(221); ax.imshow(im)
+    ax = plt.subplot(222); ax.imshow(imgradx1)
+    ax = plt.subplot(223); ax.imshow(imgrady1)
+    ax = plt.subplot(224); ax.imshow(imgradxy1)
+    
     plt.show()
