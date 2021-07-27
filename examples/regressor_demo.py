@@ -6,7 +6,7 @@
 # y = w0 + w1*x + w2*x^2 + w3*x^3 + ...+ wn*x^n
 # min{ |y - t|^2 + lambda*w'*w }
 
-from basic.linear import *
+from common.linear import *
 from bayesian.linear import *
 # from bayesian.pymc3 import *
 # from bayesian.pytorch import *

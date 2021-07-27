@@ -2,7 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from basic.utils import *
+from common.utils import *
 # from bayesian.linear import *
 from bayesian.pytorch import *
 # from bayesian.pymc3 import *

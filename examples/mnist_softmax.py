@@ -3,7 +3,7 @@
 import gzip
 import pickle
 import numpy as np
-from basic.linear import *
+from common.linear import *
 
 
 def main():

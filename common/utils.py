@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import math
+import time
 import string
 import unicodedata
 import numpy as np
@@ -103,6 +105,54 @@ def unicode_to_ascii(s):
         if unicodedata.category(c) != 'Mn'
         and c in all_letters
     )
+
+
+def calc_confusion_matrix(yt, yp, num_classes):
+    confusion = np.zeros((num_classes, num_classes))
+    for yt1, yp1 in zip(yt, yp):
+        confusion[yt1][yp1] += 1
+    # Normalize by dividing every row by its sum
+    for i in range(num_classes):
+        confusion[i] = confusion[i] / (np.sum(confusion[i]) + 1e-9)
+    return confusion
+
+
+def plot_matrix(mat, xlabels=None, ylabels=None):
+    from matplotlib import pyplot as plt
+    from matplotlib import ticker as ticker
+
+    # Set up plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cax = ax.matshow(mat)
+    fig.colorbar(cax)
+
+    # Set up axes
+    xlabels = '' if xlabels is None else xlabels
+    ylabels = '' if ylabels is None else ylabels
+    ax.set_xticklabels([''] + xlabels, rotation=90)
+    ax.set_yticklabels([''] + ylabels)
+
+    # Force label at every tick
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+
+    # sphinx_gallery_thumbnail_number = 2
+    plt.show()
+
+
+def as_minutes(s):
+    m = math.floor(s / 60)
+    s -= m * 60
+    return '%dm %.1fs' % (m, s)
+
+
+def time_since(since, percent_stride, percent_process):
+    now = time.time()
+    s = now - since
+    es = s / percent_stride
+    rs = es * (1 - percent_process)
+    return '%s (- %s)' % (as_minutes(s), as_minutes(rs))
 
 
 if __name__ == "__main__":

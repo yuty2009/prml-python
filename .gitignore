@@ -220,5 +220,8 @@ pip-log.txt
 
 # self defined
 
-.idea*
-.vscode*
+.idea
+.idea/
+
+.vscode
+.vscode/
