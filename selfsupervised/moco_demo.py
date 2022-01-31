@@ -15,7 +15,7 @@ import loader
 
 class Arguments:
     def __init__(self):
-        self.datapath = '/home/public/dataset/'
+        self.datapath = '/home/public/datasets/ImageNet'
         self.savepath = './checkpoint'
         self.gpu = None
         self.workers = 32
@@ -43,24 +43,20 @@ def main():
 
     args = Arguments()
 
-    if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
-
     # create model
-    print("=> creating model '{}'".format(args.arch))
+    print("Create model '{}'".format(args.arch))
     model = moco.MoCo(
         models.__dict__[args.arch],
         args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
     print(model)
 
     if args.gpu is not None:
+        print("Use GPU: {} for training".format(args.gpu))
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
     else:
+        print("Use all available GPUs")
         model.cuda()
-        # DistributedDataParallel will divide and allocate batch_size to all
-        # available GPUs if device_ids are not set
-        model = torch.nn.parallel.DistributedDataParallel(model)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -86,6 +82,8 @@ def main():
                   .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+    else:
+        print("=> going to train from scratch")
 
     # Data loading code
     traindir = os.path.join(args.datapath, 'train')
@@ -124,7 +122,7 @@ def main():
         num_workers=args.workers, pin_memory=True, sampler=None, drop_last=True)
 
     # start training
-    print("start training")
+    print("Start training")
     model.train()
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
@@ -133,7 +131,7 @@ def main():
 
         # train for one epoch
         train_accu1, train_accu5, train_loss = train_epoch(
-            train_loader, model, criterion, optimizer, epoch, args)
+            epoch, model, train_loader, criterion, optimizer, args)
 
         if epoch > 0 and epoch % args.save_freq == 0:
             torch.save({
