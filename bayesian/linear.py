@@ -2,7 +2,7 @@
 
 import copy
 from abc import ABCMeta, abstractmethod
-from basic.utils import *
+from common.utils import *
 
 
 class LinearModel(object):

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import scipy as sp
-from basic.utils import *
-from basic.optimizer import *
+from common.utils import *
+from common.optimizer import *
 
 
 class LinearModel(object):

@@ -1,11 +1,31 @@
 # -*- coding:utf-8 -*-
 
+import os
 import torch
 import torch.nn as nn
 from copy import deepcopy
 from torch.utils.data import DataLoader
 
 
+def accuracy(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    if target.numel() == 0:
+        return [torch.zeros([], device=output.device)]
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+        
 def square(x):
     return x * x
 
@@ -218,6 +238,31 @@ def train_epoch(model, dataset, loss_fn, optimizer, batch_size=32, device=DEVICE
         losses += loss.item()
 
     return corrects / len(dataset), losses / len(train_dataloader)
+
+
+def load_checkpoint(path):
+    """ Load weights from a given checkpoint path in pth """
+    if path.endswith('pth'):
+        state_dict = torch.load(path)['state_dict']
+    else:
+        raise ValueError("checkpoint format {} not supported yet!".format(path.split('.')[-1]))
+
+    return state_dict
+
+
+def save_checkpoint(save_dir, epoch, model, optimizer, lr_scheduler, device_ids, best=False):
+    state = {
+        'epoch': epoch,
+        'state_dict': model.state_dict() if len(device_ids) <= 1 else model.module.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'lr_scheduler': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+    }
+    filename = os.path.join(save_dir, 'current.pth')
+    torch.save(state, filename)
+
+    if best:
+        filename = os.path.join(save_dir, 'best.pth')
+        torch.save(state, filename)
 
 
 def evaluate(model, dataset, loss_fn, batch_size=1, device=DEVICE):

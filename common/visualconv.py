@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, random_split
 import numpy as np
+import scipy.signal as sig
 import matplotlib.pyplot as plt
 from common.utils import *
 from common.torchutils import train_epoch, evaluate, DEVICE
@@ -94,16 +95,20 @@ for i in range(n_folds):
         test_accu, test_loss  = evaluate(
             model, testset, loss_fn=loss_fn, batch_size=batch_size, device=DEVICE)
 
-        print((f"Epoch: {epoch}, "
-               f"Train accu: {train_accu:.3f}, loss: {train_loss:.3f}, "
-               f"Test accu:  {test_accu:.3f},  loss: {test_loss:.3f}, "
-               f"Epoch time = {time_since(start, 1/n_epochs, epoch/n_epochs)}"))
+        print(f"Epoch: {epoch}, "
+              f"Train accu: {train_accu:.3f}, loss: {train_loss:.3f}, "
+              f"Test accu:  {test_accu:.3f},  loss: {test_loss:.3f}, "
+              f"Epoch time = {time_since(start, 1/n_epochs, epoch/n_epochs)}")
 
 ks = model.features.weight.cpu().detach().numpy()
 k1 = ks[0, 0, :]
 k2 = ks[1, 0, :]
 pkk1 = abs(np.fft.fft(k1, L))[:L//2]
 pkk2 = abs(np.fft.fft(k2, L))[:L//2]
+f11, pkk11 = sig.freqz(k1, fs=fs)
+f11, pkk22 = sig.freqz(k2, fs=fs)
+pkk11 = abs(pkk11)
+pkk22 = abs(pkk22)
 
 plt.subplot(221)
 plt.plot(t * fs, x1[0], 'k')
@@ -121,16 +126,23 @@ plt.legend(['%d Hz'%f1, '%d Hz'%f2])
 plt.xlabel('f (Hz)')
 plt.ylabel('10*log10|P1(f)|')
 
+# plt.subplot(223)
+# plt.plot(k1, 'k')
+# plt.plot(k2, 'r')
+# plt.title('filters')
+# plt.legend(['kernel-1', 'kernel-2'])
 plt.subplot(223)
-plt.plot(k1, 'k')
-plt.plot(k2, 'r')
-plt.title('filters')
+plt.plot(f11, pkk11, 'k')
+plt.plot(f11, pkk22, 'r')
+plt.title('Freqz of filters')
 plt.legend(['kernel-1', 'kernel-2'])
+plt.xlabel('f (Hz)')
+plt.ylabel('|P1(f)|')
 
 plt.subplot(224)
 plt.plot(f * fs, pkk1, 'k')
 plt.plot(f * fs, pkk2, 'r')
-plt.title('Single-Sided Amplitude Spectrum of filters')
+plt.title('FFT of filters')
 plt.legend(['kernel-1', 'kernel-2'])
 plt.xlabel('f (Hz)')
 plt.ylabel('|P1(f)|')
