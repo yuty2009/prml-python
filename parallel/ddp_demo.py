@@ -8,9 +8,9 @@ Run this demo by one of the following commands
     $ python ddp_demo.py --multiprocessing-distributed
 4. Using all available GPUs on two machine with multi-process DistributedDataParallel
     $ python ddp_demo.py --multiprocessing-distributed \
-             --dist-url 'tcp://gpu01:23456' --world-size 2 
+             --dist-url 'tcp://gpu01:23456' --world-size 2 --rank 0
     $ python ddp_demo.py --multiprocessing-distributed \
-             --dist-url 'tcp://gpu01:23456' --world-size 2
+             --dist-url 'tcp://gpu01:23456' --world-size 2 --rank 1
 5. Using all available GPUs on one machine with DistributedDataParallel
     $ python -m torch.distributed.launch --nproc_per_node 8 ddp_demo.py
 6. Using all available GPUs on two machines with DistributedDataParallel
@@ -92,9 +92,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 def main(gpu, args):
     args.gpu = gpu
-    print(args)
-    
     args = dist.init_distributed_process(args)
+    print(args)
 
     if args.seed is not None:
         if args.gpu is not None:

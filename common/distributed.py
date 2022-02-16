@@ -14,11 +14,12 @@ def init_distributed_mode(args):
         args.rank = int(os.environ['SLURM_PROCID'])
         args.gpu = args.rank % torch.cuda.device_count()
     else: # for multiprocessing_distributed
-        args.rank = 0
+        if args.rank == -1:
+            args.rank = 0 # it is node rank for multiprocessing_distributed
         if 'WORLD_SIZE' in os.environ and args.world_size == -1:
             args.world_size = int(os.environ['WORLD_SIZE'])
         elif args.world_size == -1:
-            args.world_size = 1
+            args.world_size = 1 # it is number of nodes for multiprocessing_distributed
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     args.distributed = args.distributed and torch.cuda.is_available()
