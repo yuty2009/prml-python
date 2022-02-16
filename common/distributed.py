@@ -10,8 +10,9 @@ def init_distributed_mode(args):
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
+    elif 'SLURM_PROCID' in os.environ and 'SLURM_NTASKS' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
+        args.world_size = int(os.environ['SLURM_NTASKS'])
         args.gpu = args.rank % torch.cuda.device_count()
     else: # for multiprocessing_distributed
         if args.rank == -1:
@@ -35,10 +36,6 @@ def init_distributed_mode(args):
 
 
 def init_distributed_process(args):
-    if args.gpu is not None:
-        args.device = torch.device('cuda', args.gpu)
-        print("Use GPU: {} for training".format(args.gpu))
-
     # suppress printing if not master
     if args.distributed and args.gpu != 0:
         def print_pass(*args):
@@ -62,6 +59,11 @@ def init_distributed_process(args):
             args.batch_size = int(args.batch_size / args.ngpus)
             args.workers = int((args.workers + args.ngpus - 1) / args.ngpus)
 
+    if args.gpu is not None:
+        args.device = torch.device('cuda', args.gpu)
+        print("Use GPU: {} on Node: {} for training".format(args.gpu, args.rank // args.ngpus))
+
+    print(args)
     return args
 
 

@@ -4,23 +4,29 @@ Run this demo by one of the following commands
     $ python ddp_demo.py --gpu 0
 2. Using all available GPUs with DataParallel 
     $ python ddp_demo.py
-3. Using all available GPUs on one machine with multi-process DistributedDataParallel
+3. Using all available GPUs on one node with multi-process DistributedDataParallel
     $ python ddp_demo.py --multiprocessing-distributed
-4. Using all available GPUs on two machine with multi-process DistributedDataParallel
+4. Using all available GPUs on two nodes with multi-process DistributedDataParallel
     $ python ddp_demo.py --multiprocessing-distributed \
              --dist-url 'tcp://gpu01:23456' --world-size 2 --rank 0
     $ python ddp_demo.py --multiprocessing-distributed \
              --dist-url 'tcp://gpu01:23456' --world-size 2 --rank 1
-5. Using all available GPUs on one machine with DistributedDataParallel
+5. Using all available GPUs on one node with DistributedDataParallel
     $ python -m torch.distributed.launch --nproc_per_node 8 ddp_demo.py
-6. Using all available GPUs on two machines with DistributedDataParallel
+6. Using all available GPUs on two nodes with DistributedDataParallel
     $ python -m torch.distributed.launch --nnodes=2 --node_rank=0 --nproc_per_node 8 \
              --master_addr gpu01 --master_port 23456 ddp_demo.py
     $ python -m torch.distributed.launch --nnodes=2 --node_rank=1 --nproc_per_node 8 \
              --master_addr gpu01 --master_port 23456 ddp_demo.py
-7 Using part of the GPUs with DistributedDataParallel
+7. Using part of the GPUs with DistributedDataParallel
     $ CUDA_VISIBLE_DEVICES="4,5,6,7" python -m torch.distributed.launch --nproc_per_node 4 main.py
     $ CUDA_VISIBLE_DEVICES="4,5,6,7" python -m torch.distributed.launch --nproc_per_node 4 main.py
+8. Using SLURM on a single node
+    $ srun --partition=T4 --nodelist=gpu02 -n1 --gres=gpu:8 --ntasks-per-node=8 \
+           python parallel/ddp_demo.py --multiprocessing-distributed
+9. Using SLURM on multiple nodes
+    $ srun --partition=T4 --nodelist=gpu[02-03] -n2 --gres=gpu:8 --ntasks-per-node=8 \
+           python parallel/ddp_demo.py --multiprocessing-distributed --dist-url 'tcp://gpu02:23456'
 """
 import os
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
@@ -93,7 +99,6 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 def main(gpu, args):
     args.gpu = gpu
     args = dist.init_distributed_process(args)
-    print(args)
 
     if args.seed is not None:
         if args.gpu is not None:

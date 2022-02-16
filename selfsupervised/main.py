@@ -103,8 +103,6 @@ parser.add_argument('--cos', action='store_true',
 
 def main(gpu, args):
     args.gpu = gpu
-    print(args)
-    
     args = dist.init_distributed_process(args)
 
     if args.seed is not None:
