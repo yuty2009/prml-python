@@ -5,7 +5,7 @@ import torch
 import torch.optim as optim
 from scipy.stats import norm
 import matplotlib.pyplot as plt
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 from deeplearning.vae.vae_pytorch import *
 
 imsize = 28

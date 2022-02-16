@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import matplotlib.pyplot as plt
-from utils.cifarreader import *
+from dataloader.cifarreader import *
 from deeplearning.cnn.keras.cifarcnn import *
 
 imsize = 32

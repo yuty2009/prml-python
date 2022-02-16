@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 
 imsize = 28
 datapath = 'e:/prmldata/mnist/'

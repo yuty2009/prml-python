@@ -4,7 +4,7 @@ import argparse
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 from keras.utils import plot_model
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 from deeplearning.vae.vae_keras import *
 
 imsize = 28

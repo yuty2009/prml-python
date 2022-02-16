@@ -3,7 +3,7 @@
 import argparse
 import matplotlib.pyplot as plt
 from torchvision.utils import save_image
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 from deeplearning.gan.pytorch.dcgan import *
 
 imsize = 28

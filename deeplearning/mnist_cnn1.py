@@ -4,7 +4,7 @@ import argparse
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 from deeplearning.cnn.pytorch.lenet5 import *
 
 imsize = 28

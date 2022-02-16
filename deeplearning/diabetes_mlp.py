@@ -3,7 +3,6 @@
 # http://pytorch.org/tutorials/beginner/data_loading_tutorial.html#dataset-class
 import torch
 import numpy as np
-from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
 
 

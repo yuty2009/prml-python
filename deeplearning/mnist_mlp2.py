@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from utils.mnistreader import *
+from dataloader.mnistreader import *
 from deeplearning.cnn.keras.lenet5 import *
 
 imsize = 28

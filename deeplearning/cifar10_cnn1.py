@@ -3,7 +3,7 @@
 import argparse
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from utils.cifarreader import *
+from dataloader.cifarreader import *
 from deeplearning.cnn.pytorch.cifarcnn import *
 
 imsize = 32
