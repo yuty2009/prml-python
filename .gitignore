@@ -225,3 +225,9 @@ pip-log.txt
 
 .vscode
 .vscode/
+
+.data
+.data/
+
+.output
+.output/

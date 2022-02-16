@@ -24,6 +24,11 @@ class MoCo(nn.Module):
         self.encoder_q = base_encoder(num_classes=dim)
         self.encoder_k = base_encoder(num_classes=dim)
 
+        if mlp:  # hack: brute-force replacement
+            dim_mlp = self.encoder_q.fc.weight.shape[1]
+            self.encoder_q.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc)
+            self.encoder_k.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc)
+
         for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
             param_k.data.copy_(param_q.data)  # initialize
             param_k.requires_grad = False  # not update by gradient
@@ -74,13 +79,13 @@ class MoCo(nn.Module):
             self._momentum_update_key_encoder()  # update the key encoder
 
             # shuffle for making use of BN
-            im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
+            # im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
 
             k = self.encoder_k(im_k)  # keys: NxC
             k = nn.functional.normalize(k, dim=1)
 
             # undo shuffle
-            k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+            # k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
         # compute logits
         # Einstein sum is more intuitive
