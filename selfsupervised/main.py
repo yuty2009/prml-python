@@ -16,6 +16,7 @@ import torchvision.models as models
 import torchvision.datasets as datasets
 
 import moco
+import simclr
 import augment
 import common.distributed as dist 
 
@@ -82,24 +83,6 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                         'fastest way to use PyTorch for either single node or '
                         'multi node data parallel training')
 
-# moco specific configs:
-parser.add_argument('--moco-dim', default=128, type=int,
-                    help='feature dimension (default: 128)')
-parser.add_argument('--moco-k', default=65536, type=int,
-                    help='queue size; number of negative keys (default: 65536)')
-parser.add_argument('--moco-m', default=0.999, type=float,
-                    help='moco momentum of updating key encoder (default: 0.999)')
-parser.add_argument('--moco-t', default=0.07, type=float,
-                    help='softmax temperature (default: 0.07)')
-
-# options for moco v2
-parser.add_argument('--mlp', action='store_true',
-                    help='use mlp head')
-parser.add_argument('--aug-plus', action='store_true',
-                    help='use moco v2 data augmentation')
-parser.add_argument('--cos', action='store_true',
-                    help='use cosine lr schedule')
-
 
 def main(gpu, args):
     args.gpu = gpu
@@ -120,10 +103,24 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
+
+    # MoCo
+    args.moco_dim = 128
+    args.moco_k = 65536
+    args.moco_m = 0.999
+    args.moco_t = 0.07
+    args.mlp = False
+    args.aug_plus = False
+    args.cos = False
+    augtype = 'mocov1'
     model = moco.MoCo(
         models.__dict__[args.arch],
         args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
-    # print(model)
+    # SimCLR
+    # augtype = 'simclr'
+    # encoder = models.__dict__[args.arch]
+    # n_features = encoder.fc.in_features
+    # model = simclr.SimCLR(encoder=encoder, n_features=n_features)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
@@ -158,15 +155,8 @@ def main(gpu, args):
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
 
-    if args.aug_plus:
-        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        augtype = 'mocov2'
-    else:
-        # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
-        augtype = 'mocov1'
-
     if args.dataset == "STL10":
-        image_size = 96
+        image_size = 224
         train_dataset = datasets.STL10(
             args.dataset_dir,
             split="unlabeled",
@@ -176,7 +166,7 @@ def main(gpu, args):
                 ),
         )
     elif args.dataset == "CIFAR10":
-        image_size = 32
+        image_size = 224
         train_dataset = datasets.CIFAR10(
             args.dataset_dir,
             download=True,

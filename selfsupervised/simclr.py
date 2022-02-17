@@ -5,7 +5,7 @@
 import torch
 import torch.nn as nn
 
-from .gather import GatherLayer
+from gather import GatherLayer
 
 
 class SimCLR(nn.Module):
