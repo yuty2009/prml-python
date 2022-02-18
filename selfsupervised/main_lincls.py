@@ -2,8 +2,6 @@
 import os
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import time
-import math
-import shutil
 import random
 import warnings
 import argparse
@@ -18,20 +16,25 @@ import torchvision.datasets as datasets
 import moco
 import simclr
 import augment
-import common.distributed as dist 
+import common.distributed as dist
+from utils import *
 
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='MoCo')
-parser.add_argument('-d', '--dataset', default='ImageNet', metavar='DSET',
+parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
+parser.add_argument('--ssl', default='moco_v1', type=str,
+                    help='self-supervised learning approach used')
+parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('-r', '--dataset-dir', default='/home/public/datasets/ImageNet', metavar='DIR',
-                    help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/tmp',
-                    help='path where to save, empty for no saving')
+parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10',
+                    metavar='PATH', help='path to dataset')
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/checkpoint',
+                    metavar='PATH', help='path where to save, empty for no saving')
+parser.add_argument('--pretrained', default='/home/yuty2009/data/cifar10/checkpoint/moco_v1_checkpoint_0199.pth.tar',
+                    metavar='PATH', help='path to pretrained model (default: none)')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -50,6 +53,8 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                         'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--cos', action='store_true',
+                    help='use cosine lr schedule')
 parser.add_argument('--schedule', default=[120, 160], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
@@ -59,8 +64,10 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('-s', '--save-freq', default=100, type=int,
+parser.add_argument('-s', '--save-freq', default=50, type=int,
                     metavar='N', help='save frequency (default: 100)')
+parser.add_argument('-e', '--evaluate', action='store_true',
+                    help='evaluate on the test dataset')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -101,26 +108,108 @@ def main(gpu, args):
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
 
+    # Data loading code
+    print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
+
+    if args.dataset in ['cifar10', 'cifar-10', 'CIFAR10', 'CIFAR-10']:
+        args.num_classes = 10
+        args.image_size = 224
+        train_dataset = datasets.CIFAR10(
+            args.dataset_dir,
+            train=True,
+            download=True,
+            transform=augment.Augmentation.get('train', args.image_size)
+        )
+        test_dataset = datasets.CIFAR10(
+            args.dataset_dir,
+            train=False,
+            download=True,
+            transform=augment.Augmentation.get('test', args.image_size)
+        )
+    elif args.dataset in ['stl10', 'stl-10', 'STL10', 'STL-10']:
+        args.num_classes = 10
+        args.image_size = 224
+        train_dataset = datasets.STL10(
+            args.dataset_dir,
+            split="train",
+            download=True,
+            transform=augment.Augmentation.get('train', args.image_size)
+        )
+        test_dataset = datasets.STL10(
+            args.dataset_dir,
+            split="test",
+            download=True,
+            transform=augment.Augmentation.get('test', args.image_size)
+        )
+    elif args.dataset in ['imagenet', 'imagenet-1k', 'ImageNet', 'ImageNet-1k']:
+        args.num_classes = 1000
+        args.image_size = 224
+        train_dataset = datasets.ImageFolder(
+            os.path.join(args.dataset_dir, 'train'),
+            transform=augment.Augmentation.get('train', args.image_size)
+        )
+        test_dataset = datasets.ImageFolder(
+            os.path.join(args.dataset_dir, 'val'),
+            transform=augment.Augmentation.get('test', args.image_size)
+        )
+    else:
+        raise NotImplementedError
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
+
     # create model
     print("=> creating model '{}'".format(args.arch))
 
-    # MoCo
-    args.moco_dim = 128
-    args.moco_k = 65536
-    args.moco_m = 0.999
-    args.moco_t = 0.07
-    args.mlp = False
-    args.aug_plus = False
-    args.cos = False
-    augtype = 'mocov1'
-    model = moco.MoCo(
-        models.__dict__[args.arch],
-        args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
-    # SimCLR
-    # augtype = 'simclr'
-    # encoder = models.__dict__[args.arch]
-    # n_features = encoder.fc.in_features
-    # model = simclr.SimCLR(encoder=encoder, n_features=n_features)
+    model = models.__dict__[args.arch]()
+    # freeze all layers but the last fc
+    for name, param in model.named_parameters():
+        if name not in ['fc.weight', 'fc.bias']:
+            param.requires_grad = False
+    # init the fc layer
+    n_features = model.fc.in_features
+    model.fc = nn.Linear(n_features, args.num_classes)
+
+    if args.ssl.startswith('moco') or args.ssl.startswith('MoCo'):
+        module_prefix = 'module.encoder_q'
+    elif args.ssl.startswith('moco') or args.ssl.startswith('MoCo'):
+        module_prefix = 'module.encoder'
+    else:
+        raise NotImplementedError
+
+    # load from pre-trained, before DistributedDataParallel constructor
+    if args.pretrained:
+        if os.path.isfile(args.pretrained):
+            print("=> loading checkpoint '{}'".format(args.pretrained))
+            checkpoint = torch.load(args.pretrained, map_location="cpu")
+
+            # rename moco pre-trained keys
+            state_dict = checkpoint['state_dict']
+            for k in list(state_dict.keys()):
+                # retain only encoder_q up to before the embedding layer
+                if k.startswith(module_prefix) and not k.startswith(module_prefix+'.fc'):
+                    # remove prefix
+                    state_dict[k[len(module_prefix+'.'):]] = state_dict[k]
+                # delete renamed or unused k
+                del state_dict[k]
+
+            args.start_epoch = 0
+            msg = model.load_state_dict(state_dict, strict=False)
+            assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+
+            print("=> loaded pre-trained model '{}'".format(args.pretrained))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.pretrained))
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
@@ -152,51 +241,13 @@ def main(gpu, args):
     model = model.to(args.device)
     model = dist.convert_model(args, model)
 
-    # Data loading code
-    print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
-
-    if args.dataset == "STL10":
-        image_size = 224
-        train_dataset = datasets.STL10(
-            args.dataset_dir,
-            split="unlabeled",
-            download=True,
-            transform=augment.TransformContrast(
-                augment.Augmentation.get(augtype, image_size)
-                ),
-        )
-    elif args.dataset == "CIFAR10":
-        image_size = 224
-        train_dataset = datasets.CIFAR10(
-            args.dataset_dir,
-            download=True,
-            transform=augment.TransformContrast(
-                augment.Augmentation.get(augtype, image_size)
-                ),
-        )
-    elif args.dataset == "ImageNet":
-        image_size = 224
-        train_dataset = datasets.ImageFolder(
-            os.path.join(args.dataset_dir, 'train'),
-            transform=augment.TransformContrast(
-                augment.Augmentation.get(augtype, image_size)
-                ),
-        )
-    else:
-        raise NotImplementedError
-
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+    if args.evaluate:
+        evaluate(test_loader, model, criterion, args)
+        return
 
     # start training
     print("=> begin training")
-    model.train()
+    best_acc1 = 0
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
 
@@ -209,84 +260,25 @@ def main(gpu, args):
         train_accu1, train_accu5, train_loss = train_epoch(
             train_loader, model, criterion, optimizer, epoch, args)
 
-        if args.output_dir and epoch > 0 and epoch % args.save_freq == 0:
+        # evaluate on validation set
+        test_accu1, test_accu5, test_loss = evaluate(test_loader, model, criterion, args)
+
+        # remember best acc@1 and save checkpoint
+        is_best = test_accu1 > best_acc1
+        best_acc1 = max(test_accu1, best_acc1)
+
+        if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-                }, epoch, is_best=False, save_dir=args.output_dir)
+                }, epoch, is_best=is_best, save_dir=args.output_dir, prefix=args.ssl+'_lincls')
 
         print(f"Epoch: {epoch}, "
               f"Train loss: {train_loss:.3f}, accu@1: {train_accu1:.3f}, accu@5 {train_accu5:.3f}, "
+              f"Test loss: {test_loss:.3f}, accu@1: {test_accu1:.3f}, accu@5 {test_accu5:.3f}, "
               f"Epoch time = {time.time() - start_time:.1f} s")
-
-
-def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
-    model.train()
-    accus1, accus5, losses = [], [], []
-    for i, (images, _) in enumerate(train_loader):
-
-        images[0] = images[0].to(args.device)
-        images[1] = images[1].to(args.device)
-
-        # compute output
-        output, target = model(im_q=images[0], im_k=images[1])
-        loss = criterion(output, target)
-        accu1, accu5 = accuracy(output, target, topk=(1, 5))
-        losses.append(loss.item())
-        accus1.append(accu1.item())
-        accus5.append(accu5.item())
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if i % args.print_freq == 0:
-            print("Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f} Acc@1: {:.2f} Acc@5: {:.2f}"
-                    .format(epoch, i, len(train_loader), loss.item(), accu1.item(), accu5.item()))
-
-    return np.mean(accus1), np.mean(accus5), np.mean(losses)
-
-
-def save_checkpoint(state, epoch, is_best, save_dir='./'):
-    checkpoint_path = os.path.join(save_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch))
-    torch.save(state, checkpoint_path)
-    if is_best:
-        best_path = os.path.join(save_dir, 'model_best.pth.tar')
-        shutil.copyfile(checkpoint_path, best_path)
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Decay the learning rate based on schedule"""
-    lr = args.lr
-    if args.cos:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
-    else:  # stepwise lr schedule
-        for milestone in args.schedule:
-            lr *= 0.1 if epoch >= milestone else 1.
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the accuracy over the k top predictions for the specified values of k"""
-    if target.numel() == 0:
-        return [torch.zeros([], device=output.device)]
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].contiguous().view(-1).float().sum(0)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
 
 
 if __name__ == '__main__':
