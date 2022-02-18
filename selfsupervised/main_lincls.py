@@ -2,6 +2,7 @@
 import os
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import time
+import math
 import random
 import warnings
 import argparse
@@ -17,7 +18,7 @@ import moco
 import simclr
 import augment
 import common.distributed as dist
-from utils import *
+from common.torchutils import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -62,6 +63,10 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
+parser.add_argument('--topk', default=(1, 5), type=tuple,
+                    help='top k accuracy')
+parser.add_argument('-v', '--verbose', default=True, type=bool,
+                    help='whether print training information')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-s', '--save-freq', default=50, type=int,
@@ -275,10 +280,22 @@ def main(gpu, args):
                 'optimizer' : optimizer.state_dict(),
                 }, epoch, is_best=is_best, save_dir=args.output_dir, prefix=args.ssl+'_lincls')
 
-        print(f"Epoch: {epoch}, "
-              f"Train loss: {train_loss:.3f}, accu@1: {train_accu1:.3f}, accu@5 {train_accu5:.3f}, "
-              f"Test loss: {test_loss:.3f}, accu@1: {test_accu1:.3f}, accu@5 {test_accu5:.3f}, "
-              f"Epoch time = {time.time() - start_time:.1f} s")
+        print(f"Epoch: {epoch} "
+              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
+              f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5 {test_accu5:.2f} "
+              f"Epoch time: {time.time() - start_time:.1f}s")
+
+
+def adjust_learning_rate(optimizer, epoch, args):
+    """Decay the learning rate based on schedule"""
+    lr = args.lr
+    if args.cos:  # cosine lr schedule
+        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
+    else:  # stepwise lr schedule
+        for milestone in args.schedule:
+            lr *= 0.1 if epoch >= milestone else 1.
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 
 if __name__ == '__main__':
