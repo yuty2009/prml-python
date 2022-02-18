@@ -1,5 +1,6 @@
 
 import os
+import math
 import torch
 
 
@@ -88,6 +89,18 @@ def evaluate(eval_loader, model, criterion, args):
 
     res = [torch.tensor(accu1).mean() for accu1 in accuks] + [torch.tensor(losses).mean()]
     return res
+
+
+def adjust_learning_rate(optimizer, epoch, args):
+    """Decay the learning rate based on schedule"""
+    lr = args.lr
+    if args.schedule in ['cos', 'cosine']:  # cosine lr schedule
+        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
+    elif args.schedule in ['step', 'stepwise']:  # stepwise lr schedule
+        for milestone in args.lr_drop:
+            lr *= 0.1 if epoch >= milestone else 1.
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 
 def save_checkpoint(state, epoch, is_best, save_dir='./', prefix='base'):

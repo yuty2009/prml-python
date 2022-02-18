@@ -1,7 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from PIL import ImageFilter
 import random
-import torch.nn as nn
 import torchvision.transforms as transforms
 
 
@@ -29,68 +28,62 @@ class GaussianBlur(object):
         return x
 
 
-class Augmentation:
-    @staticmethod
-    def get(type='', size=224):
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
+def get_transforms(type='', size=224):
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
 
-        if type in ['', 'test', 'eval', 'val']:
-            return transforms.Compose(
-                [
-                    transforms.Resize(size=size),
-                    transforms.ToTensor(),
-                    normalize,
-                ]
-            )
+    if type in ['', 'test', 'eval', 'val']:
+        return transforms.Compose(
+            [
+                transforms.Resize(size=size),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+    elif type in ['train', 'training']:
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size=size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+    elif type in ['simclr', 'SimCLR']:
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size=size),
+                transforms.RandomHorizontalFlip(),  # with 0.5 probability
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.8, 0.8, 0.8, 0.2),
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ToTensor(),
+            ]
+        )
+    elif type in ['mocov1', 'moco_v1', 'MoCo', 'MoCov1', 'MoCo_v1']:
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+        )
+    elif type in ['mocov2', 'moco_v2', 'MoCov2', 'MoCo_v2']:
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+        )
         
-        if type in ['train', 'training']:
-            return transforms.Compose(
-                [
-                    transforms.RandomResizedCrop(size=size),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize,
-                ]
-            )
-
-        elif type in ['simclr', 'SimCLR']:
-            return transforms.Compose(
-                [
-                    transforms.RandomResizedCrop(size=size),
-                    transforms.RandomHorizontalFlip(),  # with 0.5 probability
-                    transforms.RandomApply([
-                        transforms.ColorJitter(0.8, 0.8, 0.8, 0.2),
-                    ], p=0.8),
-                    transforms.RandomGrayscale(p=0.2),
-                    transforms.ToTensor(),
-                ]
-            )
-
-        elif type in ['mocov1', 'moco_v1', 'MoCo', 'MoCov1', 'MoCo_v1']:
-            return transforms.Compose(
-                [
-                    transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
-                    transforms.RandomGrayscale(p=0.2),
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize
-                ]
-            )
-
-        elif type in ['mocov2', 'moco_v2', 'MoCov2', 'MoCo_v2']:
-            return transforms.Compose(
-                [
-                    transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
-                    transforms.RandomApply([
-                        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-                    ], p=0.8),
-                    transforms.RandomGrayscale(p=0.2),
-                    transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize
-                ]
-            )
-            

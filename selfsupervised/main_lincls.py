@@ -54,9 +54,10 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                         'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--cos', action='store_true',
-                    help='use cosine lr schedule')
-parser.add_argument('--schedule', default=[60, 80], nargs='*', type=int,
+parser.add_argument('--schedule', default='step', type=str,
+                    choices=['cos', 'step'],
+                    help='learning rate schedule (how to change lr)')
+parser.add_argument('--lr_drop', default=[60, 80], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
@@ -118,44 +119,36 @@ def main(gpu, args):
 
     if args.dataset in ['cifar10', 'cifar-10', 'CIFAR10', 'CIFAR-10']:
         args.num_classes = 10
-        args.image_size = 224
+        args.image_size = 32
         train_dataset = datasets.CIFAR10(
-            args.dataset_dir,
-            train=True,
-            download=True,
-            transform=augment.Augmentation.get('train', args.image_size)
+            args.dataset_dir, train=True, download=True,
+            transform=augment.get_transforms('train', args.image_size)
         )
         test_dataset = datasets.CIFAR10(
-            args.dataset_dir,
-            train=False,
-            download=True,
-            transform=augment.Augmentation.get('test', args.image_size)
+            args.dataset_dir, train=False, download=True,
+            transform=augment.get_transforms('test', args.image_size)
         )
     elif args.dataset in ['stl10', 'stl-10', 'STL10', 'STL-10']:
         args.num_classes = 10
-        args.image_size = 224
+        args.image_size = 96
         train_dataset = datasets.STL10(
-            args.dataset_dir,
-            split="train",
-            download=True,
-            transform=augment.Augmentation.get('train', args.image_size)
+            args.dataset_dir, split="train", download=True,
+            transform=augment.get_transforms('train', args.image_size)
         )
         test_dataset = datasets.STL10(
-            args.dataset_dir,
-            split="test",
-            download=True,
-            transform=augment.Augmentation.get('test', args.image_size)
+            args.dataset_dir, split="test", download=True,
+            transform=augment.get_transforms('test', args.image_size)
         )
     elif args.dataset in ['imagenet', 'imagenet-1k', 'ImageNet', 'ImageNet-1k']:
         args.num_classes = 1000
         args.image_size = 224
         train_dataset = datasets.ImageFolder(
             os.path.join(args.dataset_dir, 'train'),
-            transform=augment.Augmentation.get('train', args.image_size)
+            transform=augment.get_transforms('train', args.image_size)
         )
         test_dataset = datasets.ImageFolder(
             os.path.join(args.dataset_dir, 'val'),
-            transform=augment.Augmentation.get('test', args.image_size)
+            transform=augment.get_transforms('test', args.image_size)
         )
     else:
         raise NotImplementedError
@@ -284,18 +277,6 @@ def main(gpu, args):
               f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
               f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5 {test_accu5:.2f} "
               f"Epoch time: {time.time() - start_time:.1f}s")
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Decay the learning rate based on schedule"""
-    lr = args.lr
-    if args.cos:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
-    else:  # stepwise lr schedule
-        for milestone in args.schedule:
-            lr *= 0.1 if epoch >= milestone else 1.
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
 
 
 if __name__ == '__main__':

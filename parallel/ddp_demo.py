@@ -30,7 +30,7 @@ Run this demo by one of the following commands
 """
 import os
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
-import shutil
+import time
 import random
 import warnings
 import argparse
@@ -39,42 +39,58 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
-import torchvision
+import torchvision.models as models
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 
 import common.distributed as dist
+from common.torchutils import *
 
 
 parser = argparse.ArgumentParser(description='PyTorch DistributedDataParallel Demo')
-parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10', metavar='DIR',
-                help='path to dataset')
-parser.add_argument('-o', '--output_dir', default='/home/yuty2009/tmp',
-                    help='path where to save, empty for no saving')
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
-                    help='number of data loading workers (default: 1)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
+parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
+                    help='dataset used')
+parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10',
+                    metavar='PATH', help='path to dataset')
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/checkpoint',
+                    metavar='PATH', help='path where to save, empty for no saving')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
+                    help='model architecture (default: resnet50)')
 parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                         'batch size of all GPUs on the current node when '
                         'using Data Parallel or Distributed Data Parallel')
-parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
+parser.add_argument('--epochs', default=200, type=int, metavar='N',
+                    help='number of total epochs to run')
+parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+                    help='manual epoch number (useful on restarts)')
+parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--schedule', default=[120, 160], nargs='*', type=int,
+parser.add_argument('--schedule', default='', type=str,
+                    choices=['cos', 'stepwise'],
+                    help='learning rate schedule (how to change lr)')
+parser.add_argument('--lr_drop', default=[120, 160], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
+parser.add_argument('--topk', default=(1, 5), type=tuple,
+                    help='top k accuracy')
+parser.add_argument('-v', '--verbose', default=True, type=bool,
+                    help='whether print training information')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('-s', '--save-freq', default=100, type=int,
+parser.add_argument('-s', '--save-freq', default=50, type=int,
                     metavar='N', help='save frequency (default: 100)')
+parser.add_argument('-e', '--evaluate', action='store_true',
+                    help='evaluate on the test dataset')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+                    help='number of data loading workers (default: 1)')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
@@ -113,10 +129,76 @@ def main(gpu, args):
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
 
+    # Data loading code
+    print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
+
+    def get_transforms(type='', size=224):
+        if type in ['', 'test', 'eval', 'val']:
+            return transforms.Compose([
+                transforms.RandomResizedCrop(size=size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
+        elif type in ['train', 'training']:
+            return transforms.Compose([
+                transforms.Resize(size=size),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
+
+    if args.dataset in ['cifar10', 'cifar-10', 'CIFAR10', 'CIFAR-10']:
+        args.num_classes = 10
+        args.image_size = 32
+        train_dataset = datasets.CIFAR10(
+            args.dataset_dir, train=True, download=True,
+            transform=get_transforms('train', args.image_size)
+        )
+        test_dataset = datasets.CIFAR10(
+            args.dataset_dir, train=False, download=True,
+            transform=get_transforms('test', args.image_size)
+        )
+    elif args.dataset in ['stl10', 'stl-10', 'STL10', 'STL-10']:
+        args.num_classes = 10
+        args.image_size = 96
+        train_dataset = datasets.STL10(
+            args.dataset_dir, split="train", download=True,
+            transform=get_transforms('train', args.image_size)
+        )
+        test_dataset = datasets.STL10(
+            args.dataset_dir, split="test", download=True,
+            transform=get_transforms('test', args.image_size)
+        )
+    elif args.dataset in ['imagenet', 'imagenet-1k', 'ImageNet', 'ImageNet-1k']:
+        args.num_classes = 1000
+        args.image_size = 224
+        train_dataset = datasets.ImageFolder(
+            os.path.join(args.dataset_dir, 'train'),
+            transform=get_transforms('train', args.image_size)
+        )
+        test_dataset = datasets.ImageFolder(
+            os.path.join(args.dataset_dir, 'val'),
+            transform=get_transforms('test', args.image_size)
+        )
+    else:
+        raise NotImplementedError
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
+
     # create model
-    arch = 'resnet50'
-    print("=> creating model '{}'".format(arch))
-    model = torchvision.models.__dict__[arch](num_classes=10)
+    print("=> creating model '{}'".format(args.arch))
+    model = models.__dict__[args.arch](num_classes=10)
     # print(model)
 
     # define loss function (criterion) and optimizer
@@ -147,95 +229,39 @@ def main(gpu, args):
     model = model.to(args.device)
     model = dist.convert_model(args, model)
 
-    # Data loading code
-    print("=> loading data from '{}'".format(args.data_dir))
-    traindir = os.path.join(args.data_dir, './')
-    transform = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
-    train_dataset = torchvision.datasets.CIFAR10(
-        root=traindir, train=True, download=True, transform=transform)
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
-    valid_dataset = torchvision.datasets.CIFAR10(
-        root=traindir, train=False, download=True, transform=transform)
-    valid_loader = torch.utils.data.DataLoader(
-        valid_dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
     print("=> begin training")
+    best_acc1 = 0
     for epoch in range(args.start_epoch, args.epochs):
+        start_time = time.time()
+
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        # train for one epoch
-        train_epoch(train_loader, model, criterion, optimizer, epoch, args)
-        
-        accu1 = evaluate(valid_loader, model, criterion, args)
+        adjust_learning_rate(optimizer, epoch, args)
 
-        if args.output_dir and epoch > 0 and epoch % args.save_freq == 0:
+        # train for one epoch
+        train_accu1, train_accu5, train_loss = train_epoch(
+            train_loader, model, criterion, optimizer, epoch, args)
+
+        # evaluate on validation set
+        test_accu1, test_accu5, test_loss = evaluate(test_loader, model, criterion, args)
+
+        # remember best acc@1 and save checkpoint
+        is_best = test_accu1 > best_acc1
+        best_acc1 = max(test_accu1, best_acc1)
+
+        if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-                }, epoch, is_best=False, save_dir=args.output_dir)
+                }, epoch, is_best=is_best, save_dir=args.output_dir, prefix=args.arch)
 
-        print("Train Epoch: {:03d} Accu: {:.4f}".format(epoch, accu1))
-
-
-def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
-    model.train()
-    for i, (images, target) in enumerate(train_loader):
-
-        images = images.to(args.device)
-        target = target.to(args.device)
-
-        # compute output
-        output = model(images)
-        loss = criterion(output, target)
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if i % args.print_freq == 0:
-            print("Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f}"
-                .format(epoch, i, len(train_loader), loss.item()))
-
-
-def evaluate(eval_loader, model, criterion, args):
-    model.eval()
-    with torch.no_grad():
-        correct = 0
-        for i, (images, target) in enumerate(eval_loader):
-
-            images = images.to(args.device)
-            target = target.to(args.device)
-
-            # compute output
-            output = model(images)
-            loss = criterion(output, target)
-            preds = output.argmax(dim=1, keepdim=True)
-            correct += target.eq(preds.view_as(target)).sum()
-
-    return correct / len(eval_loader.dataset)
-
-
-def save_checkpoint(state, epoch, is_best, save_dir='./'):
-    checkpoint_path = os.path.join(save_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch))
-    torch.save(state, checkpoint_path)
-    if is_best:
-        best_path = os.path.join(save_dir, 'model_best.pth.tar')
-        shutil.copyfile(checkpoint_path, best_path)
+        print(f"Epoch: {epoch} "
+              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
+              f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5 {test_accu5:.2f} "
+              f"Epoch time: {time.time() - start_time:.1f}s")
 
 
 if __name__ == '__main__':
