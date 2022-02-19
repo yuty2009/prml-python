@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.multiprocessing as mp
 import torchvision.models as models
 import torchvision.datasets as datasets
+from torch.utils.tensorboard import SummaryWriter
 
 import moco
 import simclr
@@ -32,7 +33,7 @@ parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
 parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/checkpoint',
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('--pretrained', default='/home/yuty2009/data/cifar10/checkpoint/moco_v1_checkpoint_0199.pth.tar',
                     metavar='PATH', help='path to pretrained model (default: none)')
@@ -243,9 +244,16 @@ def main(gpu, args):
         evaluate(test_loader, model, criterion, args)
         return
 
+    args.writer = None
+    if args.distributed and args.gpu != 0:
+        args.writer = SummaryWriter(
+            log_dir=os.path.join(args.output_dir, 'log')
+            )
+
     # start training
     print("=> begin training")
-    best_acc1 = 0
+    args.best_acc = 0
+    args.global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
 
@@ -253,6 +261,7 @@ def main(gpu, args):
             train_sampler.set_epoch(epoch)
 
         adjust_learning_rate(optimizer, epoch, args)
+        lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
         train_accu1, train_accu5, train_loss = train_epoch(
@@ -262,16 +271,26 @@ def main(gpu, args):
         test_accu1, test_accu5, test_loss = evaluate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
-        is_best = test_accu1 > best_acc1
-        best_acc1 = max(test_accu1, best_acc1)
+        is_best = test_accu1 > args.best_acc
+        args.best_acc = max(test_accu1, args.best_acc)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-                }, epoch, is_best=is_best, save_dir=args.output_dir, prefix=args.ssl+'_lincls')
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'optimizer' : optimizer.state_dict(),
+                    }, epoch,
+                    is_best=is_best, 
+                    save_dir=os.path.join(args.output_dir, 'checkpoint'),
+                    prefix=args.ssl+'_lincls')
+
+        if hasattr(args, 'writer') and args.writer:
+            args.writer.add_scalar("Loss/train", train_loss, epoch)
+            args.writer.add_scalar("Loss/test", test_loss, epoch)
+            args.writer.add_scalar("Accu/train", train_accu1, epoch)
+            args.writer.add_scalar("Accu/test", test_accu1, epoch)
+            args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
         print(f"Epoch: {epoch} "
               f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
@@ -283,8 +302,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if not hasattr(args, 'output_dir'):
+        args.output_dir = args.dataset_dir
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+        os.makedirs(os.path.join(args.output_dir, 'log'))
+        os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
 
     args = dist.init_distributed_mode(args)
     if args.multiprocessing_distributed:

@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.multiprocessing as mp
 import torchvision.models as models
 import torchvision.datasets as datasets
+from torch.utils.tensorboard import SummaryWriter
 
 import moco
 import simclr
@@ -32,7 +33,7 @@ parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
 parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10', 
                     metavar='PATH', help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/checkpoint',
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
@@ -214,9 +215,15 @@ def main(gpu, args):
     model = model.to(args.device)
     model = dist.convert_model(args, model)
 
+    args.writer = None
+    if args.distributed and args.gpu != 0:
+        args.writer = SummaryWriter(
+            log_dir=os.path.join(args.output_dir, 'log')
+            )
+
     # start training
     print("=> begin training")
-    model.train()
+    args.global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
 
@@ -224,6 +231,7 @@ def main(gpu, args):
             train_sampler.set_epoch(epoch)
 
         adjust_learning_rate(optimizer, epoch, args)
+        lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
         train_accu1, train_accu5, train_loss = train_epoch_ssl(
@@ -232,10 +240,17 @@ def main(gpu, args):
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-                }, epoch, is_best=False, save_dir=args.output_dir, prefix=args.ssl)
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'optimizer' : optimizer.state_dict(),
+                    }, epoch,
+                    is_best=False,
+                    save_dir=os.path.join(args.output_dir, 'checkpoint'),
+                    prefix=args.ssl)
+        
+        if hasattr(args, 'writer') and args.writer:
+            args.writer.add_scalar("Loss/train", train_loss, epoch)
+            args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
         print(f"Epoch: {epoch} "
               f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
@@ -246,8 +261,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if not hasattr(args, 'output_dir'):
+        args.output_dir = args.dataset_dir
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+        os.makedirs(os.path.join(args.output_dir, 'log'))
+        os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
 
     args = dist.init_distributed_mode(args)
     if args.multiprocessing_distributed:

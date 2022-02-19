@@ -2,12 +2,13 @@
 import os
 import math
 import torch
-
+import torch.distributed as distributed
 
 def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
     if not hasattr(args, 'topk'): args.topk = (1,)
-    accuks, losses = [[] for _ in args.topk], []
+    loss_total = 0
+    accuks = [[] for _ in args.topk]
     for i, (images, _) in enumerate(train_loader):
 
         images[0] = images[0].to(args.device)
@@ -17,13 +18,21 @@ def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
         output, target = model(im_q=images[0], im_k=images[1])
         loss = criterion(output, target)
         accuk = accuracy(output, target, topk=args.topk)
-        losses.append(loss.item())
+        loss_total += loss.item()
         [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        if distributed.is_available() and distributed.is_initialized():
+            loss = loss.data.clone()
+            distributed.all_reduce(loss.div_(distributed.get_world_size()))
+
+        if hasattr(args, 'writer') and args.writer:
+            args.writer.add_scalar("Loss/train_step", loss.item(), args.global_step)
+            args.global_step += 1
 
         if hasattr(args, 'verbose') and args.verbose and i % args.print_freq == 0:
             info = "Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f} ".format(
@@ -33,14 +42,15 @@ def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
                             for k, accu1 in zip(args.topk, accuk)])
             print(info)
     
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [torch.tensor(losses).mean()]
+    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(train_loader)]
     return res
 
 
 def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
     if not hasattr(args, 'topk'): args.topk = (1,)
-    accuks, losses = [[] for _ in args.topk], []
+    loss_total = 0
+    accuks = [[] for _ in args.topk]
     for i, (images, target) in enumerate(train_loader):
 
         images = images.to(args.device)
@@ -50,13 +60,21 @@ def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
         output = model(images)
         loss = criterion(output, target)
         accuk = accuracy(output, target, topk=args.topk)
-        losses.append(loss.item())
+        loss_total += loss.item()
         [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        if distributed.is_available() and distributed.is_initialized():
+            loss = loss.data.clone()
+            distributed.all_reduce(loss.div_(distributed.get_world_size()))
+
+        if hasattr(args, 'writer') and args.writer:
+            args.writer.add_scalar("Loss/train_step", loss.item(), args.global_step)
+            args.global_step += 1
 
         if hasattr(args, 'verbose') and args.verbose and i % args.print_freq == 0:
             info = "Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f} ".format(
@@ -66,14 +84,15 @@ def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
                             for k, accu1 in zip(args.topk, accuk)])
             print(info)
     
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [torch.tensor(losses).mean()]
+    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(train_loader)]
     return res
 
 
 def evaluate(eval_loader, model, criterion, args):
     model.eval()
     if not hasattr(args, 'topk'): args.topk = (1,)
-    accuks, losses = [[] for _ in args.topk], []
+    loss_total = 0
+    accuks = [[] for _ in args.topk]
     with torch.no_grad():
         for i, (images, target) in enumerate(eval_loader):
 
@@ -84,10 +103,10 @@ def evaluate(eval_loader, model, criterion, args):
             output = model(images)
             loss = criterion(output, target)
             accuk = accuracy(output, target, topk=args.topk)
-            losses.append(loss.item())
+            loss_total += loss.item()
             [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
 
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [torch.tensor(losses).mean()]
+    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(eval_loader)]
     return res
 
 

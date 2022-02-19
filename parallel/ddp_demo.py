@@ -42,6 +42,7 @@ import torch.multiprocessing as mp
 import torchvision.models as models
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
+from torch.utils.tensorboard import SummaryWriter
 
 import common.distributed as dist
 from common.torchutils import *
@@ -52,11 +53,11 @@ parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
 parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/checkpoint',
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture (default: resnet50)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=1024, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                         'batch size of all GPUs on the current node when '
@@ -65,9 +66,9 @@ parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--schedule', default='', type=str,
+parser.add_argument('--schedule', default='cos', type=str,
                     choices=['cos', 'stepwise'],
                     help='learning rate schedule (how to change lr)')
 parser.add_argument('--lr_drop', default=[120, 160], nargs='*', type=int,
@@ -75,7 +76,7 @@ parser.add_argument('--lr_drop', default=[120, 160], nargs='*', type=int,
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)',
+                    metavar='W', help='weight decay (default: 5e-4)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), type=tuple,
                     help='top k accuracy')
@@ -135,14 +136,14 @@ def main(gpu, args):
     def get_transforms(type='', size=224):
         if type in ['', 'test', 'eval', 'val']:
             return transforms.Compose([
-                transforms.RandomResizedCrop(size=size),
-                transforms.RandomHorizontalFlip(),
+                transforms.Resize(size=size),
                 transforms.ToTensor(),
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
             ])
         elif type in ['train', 'training']:
             return transforms.Compose([
-                transforms.Resize(size=size),
+                transforms.RandomResizedCrop(size=size),
+                transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
             ])
@@ -229,8 +230,15 @@ def main(gpu, args):
     model = model.to(args.device)
     model = dist.convert_model(args, model)
 
+    args.writer = None
+    if args.distributed and args.gpu == 0:
+        args.writer = SummaryWriter(
+            log_dir=os.path.join(args.output_dir, 'log')
+            )
+
     print("=> begin training")
-    best_acc1 = 0
+    args.best_acc = 0
+    args.global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
 
@@ -238,6 +246,7 @@ def main(gpu, args):
             train_sampler.set_epoch(epoch)
 
         adjust_learning_rate(optimizer, epoch, args)
+        lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
         train_accu1, train_accu5, train_loss = train_epoch(
@@ -247,16 +256,26 @@ def main(gpu, args):
         test_accu1, test_accu5, test_loss = evaluate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
-        is_best = test_accu1 > best_acc1
-        best_acc1 = max(test_accu1, best_acc1)
+        is_best = test_accu1 > args.best_acc
+        args.best_acc = max(test_accu1, args.best_acc)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-                }, epoch, is_best=is_best, save_dir=args.output_dir, prefix=args.arch)
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'optimizer' : optimizer.state_dict(),
+                    }, epoch,
+                    is_best=is_best, 
+                    save_dir=os.path.join(args.output_dir, 'checkpoint'),
+                    prefix=args.arch)
+
+        if hasattr(args, 'writer') and args.writer:
+            args.writer.add_scalar("Loss/train", train_loss, epoch)
+            args.writer.add_scalar("Loss/test", test_loss, epoch)
+            args.writer.add_scalar("Accu/train", train_accu1, epoch)
+            args.writer.add_scalar("Accu/test", test_accu1, epoch)
+            args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
         print(f"Epoch: {epoch} "
               f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
@@ -268,8 +287,12 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
+    if not hasattr(args, 'output_dir'):
+        args.output_dir = args.dataset_dir
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+        os.makedirs(os.path.join(args.output_dir, 'log'))
+        os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
 
     args = dist.init_distributed_mode(args)
     if args.multiprocessing_distributed:
