@@ -132,6 +132,20 @@ def save_checkpoint(state, epoch, is_best, save_dir='./', prefix='base'):
         torch.save(state, best_path)
 
 
+def convert_state_dict(state_dict):
+    firstkey = next(iter(state_dict))
+    if firstkey.startswith('module.'):
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            if not k.endswith('total_ops') and not k.endswith('total_params'):
+                name = k[7:] # 7 = len('module.')
+                new_state_dict[name] = v
+        return new_state_dict
+    else:
+        return state_dict
+
+
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     if target.numel() == 0:

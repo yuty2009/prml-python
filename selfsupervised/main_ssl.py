@@ -2,7 +2,6 @@
 import os
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import time
-import math
 import random
 import warnings
 import argparse
@@ -29,9 +28,9 @@ model_names = sorted(name for name in models.__dict__
 parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
 parser.add_argument('--ssl', default='moco_v1', type=str,
                     help='self-supervised learning approach used')
-parser.add_argument('-d', '--dataset', default='CIFAR10', metavar='PATH',
+parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('-r', '--dataset-dir', default='/home/yuty2009/data/cifar10', 
+parser.add_argument('-d', '--dataset-dir', default='/home/yuty2009/data/cifar10', 
                     metavar='PATH', help='path to dataset')
 parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
@@ -71,7 +70,7 @@ parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-s', '--save-freq', default=50, type=int,
                     metavar='N', help='save frequency (default: 100)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('-r', '--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
@@ -185,6 +184,8 @@ def main(gpu, args):
     else:
         raise NotImplementedError
 
+    model = model.to(args.device)
+
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
 
@@ -196,15 +197,15 @@ def main(gpu, args):
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
+            checkpoint = torch.load(args.resume, map_location='cpu')
             args.start_epoch = checkpoint['epoch']
-            model.load_state_dict(checkpoint['state_dict'])
+            state_dict = convert_state_dict(checkpoint['state_dict'])
+            model.load_state_dict(state_dict)
             optimizer.load_state_dict(checkpoint['optimizer'])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(args.device)
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -212,7 +213,6 @@ def main(gpu, args):
     else:
         print("=> going to train from scratch")
 
-    model = model.to(args.device)
     model = dist.convert_model(args, model)
 
     args.writer = None
@@ -241,10 +241,10 @@ def main(gpu, args):
             if not args.distributed or args.rank == 0:
                 save_checkpoint({
                     'epoch': epoch + 1,
-                    'state_dict': model.state_dict(),
+                    'state_dict': model.module.state_dict() if args.ngpus > 1 else model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
-                    }, epoch,
-                    is_best=False,
+                    }, epoch + 1,
+                    is_best=False, 
                     save_dir=os.path.join(args.output_dir, 'checkpoint'),
                     prefix=args.ssl)
         
