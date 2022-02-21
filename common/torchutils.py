@@ -15,7 +15,7 @@ def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
         images[1] = images[1].to(args.device)
 
         # compute output
-        output, target = model(im_q=images[0], im_k=images[1])
+        output, target = model(images[0], images[1])
         loss = criterion(output, target)
         accuk = accuracy(output, target, topk=args.topk)
         loss_total += loss.item()

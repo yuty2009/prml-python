@@ -9,7 +9,7 @@ from gather import GatherLayer
 
 
 class SimCLR(nn.Module):
-    def __init__(self, encoder, n_features=2048, dim=128, T=0.07, proj_bn=False, world_size=1):
+    def __init__(self, encoder, n_features=2048, dim=128, T=0.07, proj_bn=True, world_size=1):
         """
         encoder: Encoder you want to use to get feature representations (eg. resnet18)
         n_features: The dimension of the encoder output, your feature dimension
@@ -22,7 +22,7 @@ class SimCLR(nn.Module):
         self.T = T
         self.world_size = world_size
         self.n_features = n_features
-        self.encoder = encoder
+        self.encoder = encoder(num_classes=n_features)
         self.similarity_f = nn.CosineSimilarity(dim=2)
 
         if proj_bn:

@@ -26,7 +26,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='moco_v1', type=str,
+parser.add_argument('--ssl', default='simclr', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
@@ -158,7 +158,6 @@ def main(gpu, args):
         args.moco_m = 0.999
         args.moco_t = 0.07
         args.mlp = False
-        args.aug_plus = False
 
         model = moco.MoCo(
             models.__dict__[args.arch],
@@ -170,16 +169,16 @@ def main(gpu, args):
         args.moco_m = 0.999
         args.moco_t = 0.07
         args.mlp = True
-        args.aug_plus = True
 
         model = moco.MoCo(
             models.__dict__[args.arch],
             args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
 
     elif args.ssl in ['simclr', 'simclr_v1', 'SimCLR', 'SimCLR_v1']:
-        encoder = models.__dict__[args.arch]
-        n_features = encoder.fc.in_features
-        model = simclr.SimCLR(encoder=encoder, n_features=n_features)
+        args.n_features = 2048
+        model = simclr.SimCLR(
+            models.__dict__[args.arch],
+            n_features=args.n_features)
     
     else:
         raise NotImplementedError
