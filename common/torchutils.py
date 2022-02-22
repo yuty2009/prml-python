@@ -3,6 +3,8 @@ import os
 import math
 import torch
 import torch.distributed as distributed
+import lars
+
 
 def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
@@ -108,6 +110,25 @@ def evaluate(eval_loader, model, criterion, args):
 
     res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(eval_loader)]
     return res
+
+
+def get_optimizer(model, args):
+    """  """
+    if str.lower(args.optimizer) == "lars": 
+        optimizer = lars.LARS(
+            model.parameters(), lr=args.lr, weight_decay=args.wd,
+            momentum=0.9, max_epoch=args.epochs,
+            warmup_epochs=round(0.1*args.epochs))
+    elif str.lower(args.optimizer) == "sgd":
+         optimizer = torch.optim.SGD(
+             model.parameters(), lr=args.lr,
+             weight_decay=args.wd, momentum=0.9)
+    elif str.lower(args.optimizer) == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(), args.lr)
+    else: 
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=args.lr, weight_decay=args.wd)
+    return optimizer
 
 
 def adjust_learning_rate(optimizer, epoch, args):

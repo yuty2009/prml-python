@@ -53,6 +53,9 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                     help='mini-batch size (default: 256), this is the total '
                         'batch size of all GPUs on the current node when '
                         'using Data Parallel or Distributed Data Parallel')
+parser.add_argument('--optimizer', default='sgd', type=str,
+                    choices=['adam', 'adamw', 'sgd', 'lars'],
+                    help='optimizer used to learn the model')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--schedule', default='step', type=str,
@@ -214,10 +217,7 @@ def main(gpu, args):
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
-
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    optimizer = get_optimizer(model, args)
 
     # optionally resume from a checkpoint
     if args.resume:
