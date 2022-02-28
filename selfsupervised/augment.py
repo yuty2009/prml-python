@@ -28,11 +28,19 @@ class GaussianBlur(object):
         return x
 
 
+CACHED_MEAN_STD = {
+    'cifar10': ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    'cifar100': ((0.5071, 0.4865, 0.4409), (0.2009, 0.1984, 0.2023)),
+    'stl10': ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237)),
+    'imagenet': ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+}
+
+
 def get_transforms(type='', size=224):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
-    if type in ['', 'test', 'eval', 'val']:
+    if str.lower(type) in ['', 'test', 'eval', 'val']:
         return transforms.Compose(
             [
                 transforms.Resize(size=size),
@@ -40,7 +48,7 @@ def get_transforms(type='', size=224):
                 normalize,
             ]
         )
-    elif type in ['train', 'training']:
+    elif str.lower(type) in ['train', 'training']:
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size=size),
@@ -49,7 +57,7 @@ def get_transforms(type='', size=224):
                 normalize,
             ]
         )
-    elif type in ['simclr', 'SimCLR']:
+    elif str.lower(type) in ['simclr', 'simclr_v1']:
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size=size),
@@ -61,7 +69,7 @@ def get_transforms(type='', size=224):
                 transforms.ToTensor(),
             ]
         )
-    elif type in ['mocov1', 'moco_v1', 'MoCo', 'MoCov1', 'MoCo_v1']:
+    elif str.lower(type) in ['moco', 'mocov1', 'moco_v1']:
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
@@ -72,7 +80,7 @@ def get_transforms(type='', size=224):
                 normalize
             ]
         )
-    elif type in ['mocov2', 'moco_v2', 'MoCov2', 'MoCo_v2']:
+    elif str.lower(type) in ['mocov2', 'moco_v2', 'byol', 'simsiam']:
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size, scale=(0.2, 1.)),

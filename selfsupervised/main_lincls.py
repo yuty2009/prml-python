@@ -1,6 +1,5 @@
 
 import os
-import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import time
 import random
 import warnings
@@ -14,8 +13,8 @@ import torchvision.models as models
 import torchvision.datasets as datasets
 from torch.utils.tensorboard import SummaryWriter
 
-import moco
-import simclr
+import sys; sys.path.append(os.path.dirname(__file__)+"/../")
+import moco, simclr
 import augment
 import common.distributed as dist
 from common.torchutils import *
@@ -56,7 +55,7 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
@@ -94,11 +93,12 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--multiprocessing-distributed', action='store_true',
+parser.add_argument('--mp', '--mp-dist', action='store_true',
                     help='Use multi-processing distributed training to launch '
                         'N processes per node, which has N GPUs. This is the '
                         'fastest way to use PyTorch for either single node or '
-                        'multi node data parallel training')
+                        'multi node data parallel training',
+                    dest='mp_dist')
 
 
 def main(gpu, args):
@@ -121,7 +121,7 @@ def main(gpu, args):
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
 
-    if args.dataset in ['cifar10', 'cifar-10', 'CIFAR10', 'CIFAR-10']:
+    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
         args.num_classes = 10
         args.image_size = 32
         train_dataset = datasets.CIFAR10(
@@ -132,7 +132,7 @@ def main(gpu, args):
             args.dataset_dir, train=False, download=True,
             transform=augment.get_transforms('test', args.image_size)
         )
-    elif args.dataset in ['stl10', 'stl-10', 'STL10', 'STL-10']:
+    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
         args.num_classes = 10
         args.image_size = 96
         train_dataset = datasets.STL10(
@@ -143,7 +143,7 @@ def main(gpu, args):
             args.dataset_dir, split="test", download=True,
             transform=augment.get_transforms('test', args.image_size)
         )
-    elif args.dataset in ['imagenet', 'imagenet-1k', 'ImageNet', 'ImageNet-1k']:
+    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
         args.num_classes = 1000
         args.image_size = 224
         train_dataset = datasets.ImageFolder(
@@ -182,9 +182,13 @@ def main(gpu, args):
     n_features = model.fc.in_features
     model.fc = nn.Linear(n_features, args.num_classes)
 
-    if args.ssl.startswith('moco') or args.ssl.startswith('MoCo'):
+    if str.lower(args.ssl).startswith('moco'):
         module_prefix = 'encoder_q'
-    elif args.ssl.startswith('moco') or args.ssl.startswith('MoCo'):
+    elif str.lower(args.ssl).startswith('simclr'):
+        module_prefix = 'encoder'
+    elif str.lower(args.ssl).startswith('byol'):
+        module_prefix = 'encoder_online'
+    elif str.lower(args.ssl).startswith('simsiam'):
         module_prefix = 'encoder'
     else:
         raise NotImplementedError
@@ -247,9 +251,9 @@ def main(gpu, args):
         return
 
     args.writer = None
-    if args.distributed and args.gpu != 0:
+    if args.distributed and args.gpu == 0:
         args.writer = SummaryWriter(
-            log_dir=os.path.join(args.output_dir, 'log')
+            log_dir=os.path.join(args.output_dir, 'log/lincls')
             )
 
     # start training
@@ -295,8 +299,8 @@ def main(gpu, args):
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
         print(f"Epoch: {epoch} "
-              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
-              f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5 {test_accu5:.2f} "
+              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5: {train_accu5:.2f} "
+              f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5: {test_accu5:.2f} "
               f"Epoch time: {time.time() - start_time:.1f}s")
 
 
@@ -312,7 +316,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
 
     args = dist.init_distributed_mode(args)
-    if args.multiprocessing_distributed:
+    if args.mp_dist:
         if args.world_size > args.ngpus:
             print(f"Training with {args.world_size // args.ngpus} nodes, "
                   f"waiting until all nodes join before starting training")

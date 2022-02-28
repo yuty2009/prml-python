@@ -22,12 +22,12 @@ def init_distributed_mode(args):
         elif args.world_size == -1:
             args.world_size = 1 # it is number of nodes for multiprocessing_distributed
 
-    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    args.distributed = args.world_size > 1 or args.mp_dist
     args.distributed = args.distributed and torch.cuda.is_available()
 
     args.ngpus = torch.cuda.device_count()
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if args.multiprocessing_distributed:
+    if args.mp_dist:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = args.ngpus * args.world_size
@@ -43,7 +43,7 @@ def init_distributed_process(args):
         builtins.print = print_pass
 
     if args.distributed:
-        if args.multiprocessing_distributed:
+        if args.mp_dist:
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
             args.rank = args.rank * args.ngpus + args.gpu

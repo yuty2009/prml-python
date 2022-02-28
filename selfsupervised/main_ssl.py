@@ -1,6 +1,5 @@
 
 import os
-import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import time
 import random
 import warnings
@@ -14,8 +13,8 @@ import torchvision.models as models
 import torchvision.datasets as datasets
 from torch.utils.tensorboard import SummaryWriter
 
-import moco
-import simclr
+import sys; sys.path.append(os.path.dirname(__file__)+"/../")
+import moco, simclr, byol, simsiam
 import augment
 import common.distributed as dist 
 from common.torchutils import *
@@ -26,7 +25,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='simclr', type=str,
+parser.add_argument('--ssl', default='moco', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
@@ -89,11 +88,12 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--multiprocessing-distributed', action='store_true',
+parser.add_argument('--mp', '--mp-dist', action='store_true',
                     help='Use multi-processing distributed training to launch '
                         'N processes per node, which has N GPUs. This is the '
                         'fastest way to use PyTorch for either single node or '
-                        'multi node data parallel training')
+                        'multi node data parallel training',
+                    dest='mp_dist')
 
 
 def main(gpu, args):
@@ -116,7 +116,7 @@ def main(gpu, args):
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
 
-    if args.dataset in ['cifar10', 'cifar-10', 'CIFAR10', 'CIFAR-10']:
+    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
         args.image_size = 224
         train_dataset = datasets.CIFAR10(
             args.dataset_dir, download=True,
@@ -124,7 +124,7 @@ def main(gpu, args):
                 augment.get_transforms(args.ssl, args.image_size)
                 ),
         )
-    elif args.dataset in ['stl10', 'stl-10', 'STL10', 'STL-10']:
+    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
         args.image_size = 224
         train_dataset = datasets.STL10(
             args.dataset_dir, split="unlabeled", download=True,
@@ -132,7 +132,7 @@ def main(gpu, args):
                 augment.get_transforms(args.ssl, args.image_size)
                 ),
         )
-    elif args.dataset in ['imagenet', 'imagenet-1k', 'ImageNet', 'ImageNet-1k']:
+    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
         args.image_size = 224
         train_dataset = datasets.ImageFolder(
             os.path.join(args.dataset_dir, 'train'),
@@ -155,18 +155,18 @@ def main(gpu, args):
     # create model
     print("=> creating model '{}'".format(args.arch))
 
-    if args.ssl in ['mocov1', 'moco_v1', 'MoCov1', 'MoCo_v1']:
+    if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
         args.moco_dim = 128
         args.moco_k = 65536
         args.moco_m = 0.999
         args.moco_t = 0.07
         args.mlp = False
-
         model = moco.MoCo(
             models.__dict__[args.arch],
             args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
+        criterion = nn.CrossEntropyLoss()
 
-    elif args.ssl in ['mocov2', 'moco_v2', 'MoCov2', 'MoCo_v2']:
+    elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
         args.moco_dim = 128
         args.moco_k = 65536
         args.moco_m = 0.999
@@ -176,20 +176,40 @@ def main(gpu, args):
         model = moco.MoCo(
             models.__dict__[args.arch],
             args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
+        criterion = nn.CrossEntropyLoss()
 
-    elif args.ssl in ['simclr', 'simclr_v1', 'SimCLR', 'SimCLR_v1']:
+    elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
         args.n_features = 2048
         model = simclr.SimCLR(
             models.__dict__[args.arch],
             n_features=args.n_features)
+        criterion = nn.CrossEntropyLoss()
+
+    elif str.lower(args.ssl) in ['byol']:
+        args.lr = 3e-4
+        args.momentum = 0.99
+        args.dim = 2048
+        args.pred_dim = 256
+        model = byol.BYOL(
+            models.__dict__[args.arch],
+            dim=args.dim, pred_dim=args.pred_dim, m=args.momentum)
+        criterion = nn.CosineSimilarity(dim=1)
+    
+    elif str.lower(args.ssl) in ['simsiam']:
+        args.lr = 0.05
+        args.momentum = 0.9
+        args.dim = 2048
+        args.pred_dim = 256
+        model = simsiam.SimSiam(
+            models.__dict__[args.arch],
+            dim=args.dim, pred_dim=args.pred_dim)
+        criterion = nn.CosineSimilarity(dim=1)
     
     else:
         raise NotImplementedError
 
     model = model.to(args.device)
-
-    # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().to(args.device)
+    criterion = criterion.to(args.device)
     optimizer = get_optimizer(model, args)
 
     # optionally resume from a checkpoint
@@ -215,7 +235,7 @@ def main(gpu, args):
     model = dist.convert_model(args, model)
 
     args.writer = None
-    if args.distributed and args.gpu != 0:
+    if args.distributed and args.gpu == 0:
         args.writer = SummaryWriter(
             log_dir=os.path.join(args.output_dir, 'log')
             )
@@ -252,7 +272,7 @@ def main(gpu, args):
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
         print(f"Epoch: {epoch} "
-              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5 {train_accu5:.2f} "
+              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5: {train_accu5:.2f} "
               f"Epoch time: {time.time() - start_time:.1f}s")
 
 
@@ -268,7 +288,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
 
     args = dist.init_distributed_mode(args)
-    if args.multiprocessing_distributed:
+    if args.mp_dist:
         if args.world_size > args.ngpus:
             print(f"Training with {args.world_size // args.ngpus} nodes, "
                   f"waiting until all nodes join before starting training")
