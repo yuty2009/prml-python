@@ -24,7 +24,6 @@ def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
             output, target = model(images[0], images[1])
             loss = criterion(output, target)
             accuk = accuracy(output, target, topk=args.topk)
-        loss_total += loss.item()
         [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
 
         # compute gradient and do SGD step
@@ -35,6 +34,7 @@ def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
         if distributed.is_available() and distributed.is_initialized():
             loss = loss.data.clone()
             distributed.all_reduce(loss.div_(distributed.get_world_size()))
+        loss_total += loss.item()
 
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train_step", loss.item(), args.global_step)
@@ -147,13 +147,15 @@ def adjust_learning_rate(optimizer, epoch, args):
         param_group['lr'] = lr
 
 
-def save_checkpoint(state, epoch, is_best, save_dir='./', prefix='base'):
+def save_checkpoint(state, epoch, is_best, save_dir='./'):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
     checkpoint_path = os.path.join(
-        save_dir, 'chkpt_{}_{:04d}.pth.tar'.format(prefix, epoch)
+        save_dir, 'chkpt_{:04d}.pth.tar'.format(epoch)
         )
     torch.save(state, checkpoint_path)
     if is_best:
-        best_path = os.path.join(save_dir, 'best_{}.pth.tar'.format(prefix))
+        best_path = os.path.join(save_dir, 'best.pth.tar')
         torch.save(state, best_path)
 
 

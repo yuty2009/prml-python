@@ -17,19 +17,19 @@ import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import moco, simclr, byol, simsiam
 import augment
 import common.distributed as dist 
-from common.torchutils import *
+import common.torchutils as utils
 
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='moco', type=str,
+parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
+parser.add_argument('--ssl', default='moco_v1', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('-d', '--dataset-dir', default='/home/yuty2009/data/cifar10', 
+parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10', 
                     metavar='PATH', help='path to dataset')
 parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
@@ -38,13 +38,13 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=512, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                         'batch size of all GPUs on the current node when '
@@ -54,8 +54,8 @@ parser.add_argument('--optimizer', default='sgd', type=str,
                     help='optimizer used to learn the model')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--schedule', default='cos', type=str,
-                    choices=['cos', 'stepwise'],
+parser.add_argument('--schedule', default='step', type=str,
+                    choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')
 parser.add_argument('--lr_drop', default=[120, 160], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
@@ -114,31 +114,41 @@ def main(gpu, args):
                       'from checkpoints.')
 
     # Data loading code
-    print("=> loading dataset {} from '{}'".format(args.dataset, args.dataset_dir))
+    print("=> loading dataset {} from '{}'".format(args.dataset, args.data_dir))
 
     if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
-        args.image_size = 224
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.image_size = 32
+        args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         train_dataset = datasets.CIFAR10(
-            args.dataset_dir, download=True,
+            args.data_dir, train=True, download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size)
-                ),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
+        )
+    elif str.lower(args.dataset) in ['cifar100', 'cifar-100']:
+        args.image_size = 32
+        args.mean_std = ((0.5071, 0.4865, 0.4409), (0.2009, 0.1984, 0.2023))
+        train_dataset = datasets.CIFAR100(
+            args.data_dir, train=True, download=True,
+            transform=augment.TransformContrast(
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
     elif str.lower(args.dataset) in ['stl10', 'stl-10']:
-        args.image_size = 224
+        args.image_size = 96
+        args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
         train_dataset = datasets.STL10(
-            args.dataset_dir, split="unlabeled", download=True,
+            args.data_dir, split="unlabeled", download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size)
-                ),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
     elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
         args.image_size = 224
+        args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         train_dataset = datasets.ImageFolder(
-            os.path.join(args.dataset_dir, 'train'),
+            os.path.join(args.data_dir, 'train'),
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size)
-                ),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
     else:
         raise NotImplementedError
@@ -157,10 +167,11 @@ def main(gpu, args):
 
     if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
         args.moco_dim = 128
-        args.moco_k = 65536
-        args.moco_m = 0.999
-        args.moco_t = 0.07
+        args.moco_k = 4096 # 4096 for cifar10
+        args.moco_m = 0.99 # 0.99 for cifar10
+        args.moco_t = 0.1 # 0.1 for cifar10
         args.mlp = False
+        args.schedule = 'step'
         model = moco.MoCo(
             models.__dict__[args.arch],
             args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
@@ -168,11 +179,11 @@ def main(gpu, args):
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
         args.moco_dim = 128
-        args.moco_k = 65536
-        args.moco_m = 0.999
+        args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
+        args.moco_m = 0.99 # 0.99 for cifar10
         args.moco_t = 0.07
         args.mlp = True
-
+        args.schedule = 'cos'
         model = moco.MoCo(
             models.__dict__[args.arch],
             args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
@@ -210,7 +221,7 @@ def main(gpu, args):
 
     model = model.to(args.device)
     criterion = criterion.to(args.device)
-    optimizer = get_optimizer(model, args)
+    optimizer = utils.get_optimizer(model, args)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -218,7 +229,7 @@ def main(gpu, args):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, map_location='cpu')
             args.start_epoch = checkpoint['epoch']
-            state_dict = convert_state_dict(checkpoint['state_dict'])
+            state_dict = utils.convert_state_dict(checkpoint['state_dict'])
             model.load_state_dict(state_dict)
             optimizer.load_state_dict(checkpoint['optimizer'])
             for state in optimizer.state.values():
@@ -233,12 +244,11 @@ def main(gpu, args):
         print("=> going to train from scratch")
 
     model = dist.convert_model(args, model)
+    torch.backends.cudnn.benchmark = True
 
     args.writer = None
     if args.distributed and args.gpu == 0:
-        args.writer = SummaryWriter(
-            log_dir=os.path.join(args.output_dir, 'log')
-            )
+        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/{args.ssl}"))
 
     # start training
     print("=> begin training")
@@ -249,23 +259,22 @@ def main(gpu, args):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        adjust_learning_rate(optimizer, epoch, args)
+        utils.adjust_learning_rate(optimizer, epoch, args)
         lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
-        train_accu1, train_accu5, train_loss = train_epoch_ssl(
+        train_accu1, train_accu5, train_loss = utils.train_epoch_ssl(
             train_loader, model, criterion, optimizer, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
-                save_checkpoint({
+                utils.save_checkpoint({
                     'epoch': epoch + 1,
                     'state_dict': model.module.state_dict() if args.ngpus > 1 else model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
-                    is_best=False, 
-                    save_dir=os.path.join(args.output_dir, 'checkpoint'),
-                    prefix=args.ssl)
+                    is_best=False,
+                    save_dir=os.path.join(args.output_dir, f"checkpoint/ssl_{args.ssl}"))
         
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)
@@ -281,11 +290,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if not hasattr(args, 'output_dir'):
-        args.output_dir = args.dataset_dir
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-        os.makedirs(os.path.join(args.output_dir, 'log'))
-        os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
+        args.output_dir = args.data_dir
 
     args = dist.init_distributed_mode(args)
     if args.mp_dist:
