@@ -1,138 +1,90 @@
 
 import os
 import math
+import tqdm
 import torch
-import torch.distributed as distributed
-import common.lars as lars
+import common.distributed as dist
 
 
-def train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args):
+def train_epoch(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
+    total_loss, total_num = 0.0, 0
     if not hasattr(args, 'topk'): args.topk = (1,)
-    loss_total = 0
-    accuks = [[] for _ in args.topk]
-    for i, (images, _) in enumerate(train_loader):
+    total_corrects = torch.zeros(len(args.topk), dtype=torch.float)
 
-        images[0] = images[0].to(args.device)
-        images[1] = images[1].to(args.device)
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+    data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-        if str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
-            p1, p2, z1, z2 = model(images[0], images[1])
-            loss = -0.5 * (criterion(p1, z2).mean() + criterion(p2, z1).mean())
-            accuk = torch.zeros(len(args.topk), device=loss.device)
-        else: # 'moco', 'moco_v1', 'moco_v2', 'simclr', 'simclr_v1'
-            output, target = model(images[0], images[1])
-            loss = criterion(output, target)
-            accuk = accuracy(output, target, topk=args.topk)
-        [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if distributed.is_available() and distributed.is_initialized():
-            loss = loss.data.clone()
-            distributed.all_reduce(loss.div_(distributed.get_world_size()))
-        loss_total += loss.item()
-
-        if hasattr(args, 'writer') and args.writer:
-            args.writer.add_scalar("Loss/train_step", loss.item(), args.global_step)
-            args.global_step += 1
-
-        if hasattr(args, 'verbose') and args.verbose and i % args.print_freq == 0:
-            info = "Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f} ".format(
-                epoch, i, len(train_loader), loss.item()
-                )
-            info += ' '.join(["Acc@{}: {:.2f}".format(k, accu1) 
-                            for k, accu1 in zip(args.topk, accuk)])
-            print(info)
-    
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(train_loader)]
-    return res
-
-
-def train_epoch(train_loader, model, criterion, optimizer, epoch, args):
-    model.train()
-    if not hasattr(args, 'topk'): args.topk = (1,)
-    loss_total = 0
-    accuks = [[] for _ in args.topk]
-    for i, (images, target) in enumerate(train_loader):
-
-        images = images.to(args.device)
+    for data, target in data_bar:
+        data = data.to(args.device)
         target = target.to(args.device)
-
         # compute output
-        output = model(images)
+        output = model(data)
         loss = criterion(output, target)
-        accuk = accuracy(output, target, topk=args.topk)
-        loss_total += loss.item()
-        [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
-
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if distributed.is_available() and distributed.is_initialized():
-            loss = loss.data.clone()
-            distributed.all_reduce(loss.div_(distributed.get_world_size()))
+        loss = dist.all_reduce(loss)
+        total_loss += loss.item()
+        total_num += data.size(0)
+        preds = torch.argsort(output, dim=-1, descending=True)
+        for i, k in enumerate(args.topk):
+                total_corrects[i] += torch.sum((preds[:, 0:k] \
+                    == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+        accuks = 100 * total_corrects / total_num
 
-        if hasattr(args, 'writer') and args.writer:
-            args.writer.add_scalar("Loss/train_step", loss.item(), args.global_step)
-            args.global_step += 1
-
-        if hasattr(args, 'verbose') and args.verbose and i % args.print_freq == 0:
-            info = "Train Epoch: {:03d} Batch: {:05d}/{:05d} Loss: {:.4f} ".format(
-                epoch, i, len(train_loader), loss.item()
-                )
-            info += ' '.join(["Acc@{}: {:.2f}".format(k, accu1) 
-                            for k, accu1 in zip(args.topk, accuk)])
-            print(info)
+        if show_bar:
+            info = "Train Epoch: [{}/{}] Loss: {:.4f} ".format(
+                epoch, args.epochs, total_loss / total_num)
+            info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
+                            for k, accuk in zip(args.topk, accuks)])
+            data_bar.set_description(info)
     
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(train_loader)]
-    return res
+    return [total_loss/len(data_loader)] + [accuk for accuk in accuks]
 
 
-def evaluate(eval_loader, model, criterion, args):
+def evaluate(data_loader, model, criterion, epoch, args):
     model.eval()
+    total_loss, total_num = 0.0, 0
     if not hasattr(args, 'topk'): args.topk = (1,)
-    loss_total = 0
-    accuks = [[] for _ in args.topk]
+    total_corrects = torch.zeros(len(args.topk), dtype=torch.float)
+
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+    data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
+
     with torch.no_grad():
-        for i, (images, target) in enumerate(eval_loader):
-
-            images = images.to(args.device)
+        for data, target in data_bar:
+            data = data.to(args.device)
             target = target.to(args.device)
-
             # compute output
-            output = model(images)
+            output = model(data)
             loss = criterion(output, target)
-            accuk = accuracy(output, target, topk=args.topk)
-            loss_total += loss.item()
-            [accuks[k].append(accu1.item()) for k, accu1 in enumerate(accuk)]
 
-    res = [torch.tensor(accu1).mean() for accu1 in accuks] + [loss_total/len(eval_loader)]
-    return res
+            loss = dist.all_reduce(loss)
+            total_loss += loss.item()
+            total_num += data.size(0)
+            preds = torch.argsort(output, dim=-1, descending=True)
+            for i, k in enumerate(args.topk):
+                    total_corrects[i] += torch.sum((preds[:, 0:k] \
+                        == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+            accuks = 100 * total_corrects / total_num
 
-
-def get_optimizer(model, args):
-    """  """
-    if str.lower(args.optimizer) == "lars": 
-        optimizer = lars.LARS(
-            model.parameters(), lr=args.lr, weight_decay=args.weight_decay,
-            momentum=0.9, max_epoch=args.epochs,
-            warmup_epochs=round(0.1*args.epochs))
-    elif str.lower(args.optimizer) == "sgd":
-         optimizer = torch.optim.SGD(
-             model.parameters(), lr=args.lr,
-             weight_decay=args.weight_decay, momentum=0.9)
-    elif str.lower(args.optimizer) == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), args.lr)
-    else: 
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    return optimizer
+            if show_bar:
+                info = "Test  Epoch: [{}/{}] Loss: {:.4f} ".format(
+                    epoch, args.epochs, total_loss / total_num)
+                info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
+                                for k, accuk in zip(args.topk, accuks)])
+                data_bar.set_description(info)
+    
+    return [total_loss/len(data_loader)] + [accuk for accuk in accuks]
 
 
 def adjust_learning_rate(optimizer, epoch, args):

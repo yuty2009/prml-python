@@ -1,4 +1,7 @@
 # Copy from https://github.com/facebookresearch/moco/blob/main/moco/builder.py
+# Refer to  https://github.com/leftthomas/SimCLR
+#           https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb
+import copy
 import torch
 import torch.nn as nn
 
@@ -8,30 +11,40 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07, mlp=False):
+    def __init__(
+        self, encoder, encoder_dim=2048, dim=128,
+        K=65536, m=0.999, T=0.07, mlp=False, symmetric=False):
         """
-        dim: feature dimension (default: 128)
+        encoder: encoder you want to use to get feature representations (eg. resnet50)
+        encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
+        dim: projection dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
         m: moco momentum of updating key encoder (default: 0.999)
         T: softmax temperature (default: 0.07)
+        mlp: with a multi-layer projector (default: False)
+        symmetric: use symmetric loss or not (default: False)
         """
         super(MoCo, self).__init__()
 
         self.K = K
         self.m = m
         self.T = T
+        self.symmetric = symmetric
 
-        self.encoder_q = base_encoder(num_classes=dim)
-        self.encoder_k = base_encoder(num_classes=dim)
+        self.encoder = encoder
+        if not mlp:
+            self.projector = nn.Linear(encoder_dim, dim)
+        else:
+            self.projector = nn.Sequential(
+                nn.Linear(encoder_dim, encoder_dim, bias=False),
+                nn.BatchNorm1d(encoder_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(encoder_dim, dim))
 
-        if mlp:  # hack: brute-force replacement
-            dim_mlp = self.encoder_q.fc.weight.shape[1]
-            self.encoder_q.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc)
-            self.encoder_k.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc)
-
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
-            param_k.data.copy_(param_q.data)  # initialize
-            param_k.requires_grad = False  # not update by gradient
+        self.model = nn.Sequential(self.encoder, self.projector)
+        self.model_momentum = copy.deepcopy(self.model)
+        for p in self.model_momentum.parameters():
+            p.requires_grad = False
 
         # create the queue
         self.register_buffer("queue", torch.randn(dim, K))
@@ -44,13 +57,13 @@ class MoCo(nn.Module):
         """
         Momentum update of the key encoder
         """
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+        for param_q, param_k in zip(self.model.parameters(), self.model_momentum.parameters()):
             param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
 
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
         # gather keys before updating queue
-        # keys = concat_all_gather(keys)
+        keys = concat_all_gather(keys)
 
         batch_size = keys.shape[0]
 
@@ -111,6 +124,27 @@ class MoCo(nn.Module):
         return x_gather[idx_this]
 
     def forward(self, im_q, im_k):
+        with torch.no_grad():  # no gradient to keys
+            self._momentum_update_key_encoder()  # update the key encoder
+
+        if self.symmetric:
+            p1, t1, k1 = self._forward_1(im_q, im_k)
+            p2, t2, k2 = self._forward_1(im_k, im_q)
+            k = torch.cat([k1, k2], dim=0)
+
+            # dequeue and enqueue
+            self._dequeue_and_enqueue(k)
+
+            return p1, p2, t1, t2
+        else:
+            p, t, k = self._forward_1(im_q, im_k)
+
+            # dequeue and enqueue
+            self._dequeue_and_enqueue(k)
+
+            return p, t
+
+    def _forward_1(self, im_q, im_k):
         """
         Input:
             im_q: a batch of query images
@@ -118,19 +152,16 @@ class MoCo(nn.Module):
         Output:
             logits, targets
         """
-
         # compute query features
-        q = self.encoder_q(im_q)  # queries: NxC
+        q = self.model(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
 
         # compute key features
         with torch.no_grad():  # no gradient to keys
-            self._momentum_update_key_encoder()  # update the key encoder
-
             # shuffle for making use of BN
             # im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
 
-            k = self.encoder_k(im_k)  # keys: NxC
+            k = self.model_momentum(im_k)  # keys: NxC
             k = nn.functional.normalize(k, dim=1)
 
             # undo shuffle
@@ -152,10 +183,7 @@ class MoCo(nn.Module):
         # labels: positive key indicators
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
 
-        # dequeue and enqueue
-        self._dequeue_and_enqueue(k)
-
-        return logits, labels
+        return logits, labels, k
 
 
 # utils

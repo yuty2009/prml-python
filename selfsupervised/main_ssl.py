@@ -1,23 +1,19 @@
 
 import os
-import time
 import random
 import warnings
 import argparse
 import numpy as np
 
 import torch
-import torch.nn as nn
 import torch.multiprocessing as mp
 import torchvision.models as models
-import torchvision.datasets as datasets
 from torch.utils.tensorboard import SummaryWriter
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
-import moco, simclr, byol, simsiam
-import augment
-import common.distributed as dist 
+import common.distributed as dist
 import common.torchutils as utils
+from sslutils import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -44,7 +40,7 @@ parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=512, type=int,
+parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                         'batch size of all GPUs on the current node when '
@@ -66,10 +62,6 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), nargs='*', type=int,
                     help='top k accuracy')
-parser.add_argument('-v', '--verbose', default=True, type=bool,
-                    help='whether print training information')
-parser.add_argument('-p', '--print-freq', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-s', '--save-freq', default=50, type=int,
                     metavar='N', help='save frequency (default: 100)')
 parser.add_argument('-r', '--resume', default='', type=str, metavar='PATH',
@@ -115,43 +107,7 @@ def main(gpu, args):
 
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.data_dir))
-
-    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
-        args.lr = 6e-2 # 6e-2 for cifar10
-        args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.image_size = 32
-        args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        train_dataset = datasets.CIFAR10(
-            args.data_dir, train=True, download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-    elif str.lower(args.dataset) in ['cifar100', 'cifar-100']:
-        args.image_size = 32
-        args.mean_std = ((0.5071, 0.4865, 0.4409), (0.2009, 0.1984, 0.2023))
-        train_dataset = datasets.CIFAR100(
-            args.data_dir, train=True, download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
-        args.image_size = 96
-        args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
-        train_dataset = datasets.STL10(
-            args.data_dir, split="unlabeled", download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
-        args.image_size = 224
-        args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        train_dataset = datasets.ImageFolder(
-            os.path.join(args.data_dir, 'train'),
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-    else:
-        raise NotImplementedError
+    train_dataset = get_train_dataset(args)
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -164,64 +120,12 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-
-    if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
-        args.moco_dim = 128
-        args.moco_k = 4096 # 4096 for cifar10
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.moco_t = 0.1 # 0.1 for cifar10
-        args.mlp = False
-        args.schedule = 'step'
-        model = moco.MoCo(
-            models.__dict__[args.arch],
-            args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
-        criterion = nn.CrossEntropyLoss()
-
-    elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
-        args.moco_dim = 128
-        args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.moco_t = 0.07
-        args.mlp = True
-        args.schedule = 'cos'
-        model = moco.MoCo(
-            models.__dict__[args.arch],
-            args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
-        criterion = nn.CrossEntropyLoss()
-
-    elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
-        args.n_features = 2048
-        model = simclr.SimCLR(
-            models.__dict__[args.arch],
-            n_features=args.n_features)
-        criterion = nn.CrossEntropyLoss()
-
-    elif str.lower(args.ssl) in ['byol']:
-        args.lr = 3e-4
-        args.momentum = 0.99
-        args.dim = 2048
-        args.pred_dim = 256
-        model = byol.BYOL(
-            models.__dict__[args.arch],
-            dim=args.dim, pred_dim=args.pred_dim, m=args.momentum)
-        criterion = nn.CosineSimilarity(dim=1)
-    
-    elif str.lower(args.ssl) in ['simsiam']:
-        args.lr = 0.05
-        args.momentum = 0.9
-        args.dim = 2048
-        args.pred_dim = 256
-        model = simsiam.SimSiam(
-            models.__dict__[args.arch],
-            dim=args.dim, pred_dim=args.pred_dim)
-        criterion = nn.CosineSimilarity(dim=1)
-    
-    else:
-        raise NotImplementedError
-
-    model = model.to(args.device)
-    criterion = criterion.to(args.device)
-    optimizer = utils.get_optimizer(model, args)
+    args.symmetric = False
+    base_encoder = models.__dict__[args.arch]()
+    base_encoder = get_base_encoder(base_encoder, args)
+    model, criterion = get_ssl_model_and_criterion(base_encoder, args)
+    # print(model)
+    optimizer = get_optimizer(model, args)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -247,15 +151,12 @@ def main(gpu, args):
     torch.backends.cudnn.benchmark = True
 
     args.writer = None
-    if args.distributed and args.gpu == 0:
+    if not args.distributed or args.rank == 0:
         args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/{args.ssl}"))
 
     # start training
     print("=> begin training")
-    args.global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
-        start_time = time.time()
-
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
@@ -263,8 +164,7 @@ def main(gpu, args):
         lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
-        train_accu1, train_accu5, train_loss = utils.train_epoch_ssl(
-            train_loader, model, criterion, optimizer, epoch, args)
+        train_loss = train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
@@ -274,15 +174,11 @@ def main(gpu, args):
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
                     is_best=False,
-                    save_dir=os.path.join(args.output_dir, f"checkpoint/ssl_{args.ssl}"))
+                    save_dir=os.path.join(args.output_dir, f"checkpoint/ssl_{args.ssl}_{args.arch}"))
         
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
-
-        print(f"Epoch: {epoch} "
-              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5: {train_accu5:.2f} "
-              f"Epoch time: {time.time() - start_time:.1f}s")
 
 
 if __name__ == '__main__':

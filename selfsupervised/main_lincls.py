@@ -1,6 +1,5 @@
 
 import os
-import time
 import random
 import warnings
 import argparse
@@ -14,10 +13,10 @@ import torchvision.datasets as datasets
 from torch.utils.tensorboard import SummaryWriter
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
-import moco, simclr
 import augment
 import common.distributed as dist
 import common.torchutils as utils
+from sslutils import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -34,7 +33,7 @@ parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10',
 parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('--pretrained', 
-                    default='/home/yuty2009/data/cifar10/checkpoint/ssl_moco_v1/chkpt_0200.pth.tar',
+                    default='/home/yuty2009/data/cifar10/checkpoint/ssl_moco_v1_resnet18/chkpt_0200.pth.tar',
                     metavar='PATH', help='path to pretrained model (default: none)')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
@@ -69,10 +68,6 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), type=tuple,
                     help='top k accuracy')
-parser.add_argument('-v', '--verbose', default=True, type=bool,
-                    help='whether print training information')
-parser.add_argument('-p', '--print-freq', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-s', '--save-freq', default=50, type=int,
                     metavar='N', help='save frequency (default: 100)')
 parser.add_argument('-e', '--evaluate', action='store_true',
@@ -93,7 +88,7 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--mp', '--mp-dist', action='store_true',
+parser.add_argument('--mp', '--mp-dist', action='store_true', default=True,
                     help='Use multi-processing distributed training to launch '
                         'N processes per node, which has N GPUs. This is the '
                         'fastest way to use PyTorch for either single node or '
@@ -175,56 +170,15 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-
-    model = models.__dict__[args.arch]()
-    # freeze all layers but the last fc
-    for name, param in model.named_parameters():
-        if name not in ['fc.weight', 'fc.bias']:
-            param.requires_grad = False
-    # init the fc layer
-    n_features = model.fc.in_features
-    model.fc = nn.Linear(n_features, args.num_classes)
-
-    if str.lower(args.ssl).startswith('moco'):
-        module_prefix = 'encoder_q'
-    elif str.lower(args.ssl).startswith('simclr'):
-        module_prefix = 'encoder'
-    elif str.lower(args.ssl).startswith('byol'):
-        module_prefix = 'encoder_online'
-    elif str.lower(args.ssl).startswith('simsiam'):
-        module_prefix = 'encoder'
-    else:
-        raise NotImplementedError
-
-    # load from pre-trained, before DistributedDataParallel constructor
-    if args.pretrained:
-        if os.path.isfile(args.pretrained):
-            print("=> loading checkpoint '{}'".format(args.pretrained))
-            checkpoint = torch.load(args.pretrained, map_location='cpu')
-
-            # rename moco pre-trained keys
-            state_dict = utils.convert_state_dict(checkpoint['state_dict'])
-            for k in list(state_dict.keys()):
-                # retain only encoder_q up to before the embedding layer
-                if k.startswith(module_prefix) and not k.startswith(module_prefix+'.fc'):
-                    # remove prefix
-                    state_dict[k[len(module_prefix+'.'):]] = state_dict[k]
-                # delete renamed or unused k
-                del state_dict[k]
-
-            args.start_epoch = 0
-            msg = model.load_state_dict(state_dict, strict=False)
-            assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
-
-            print("=> loaded pre-trained model '{}'".format(args.pretrained))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.pretrained))
+    base_encoder = models.__dict__[args.arch]()
+    base_encoder = get_base_encoder(base_encoder, args)
+    model = LinearClassifier(
+        base_encoder, args.num_classes, args.encoder_dim, args.pretrained)
 
     model = model.to(args.device)
-
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
-    optimizer = utils.get_optimizer(model, args)
+    optimizer = get_optimizer(model, args)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -249,21 +203,19 @@ def main(gpu, args):
     model = dist.convert_model(args, model)
 
     if args.evaluate:
-        test_accu1, test_accu5, test_loss = utils.evaluate(test_loader, model, criterion, args)
+        test_loss, test_accu1, test_accu5 = utils.evaluate(
+            test_loader, model, criterion, 0, args)
         print(f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5 {test_accu5:.2f}")
         return
 
     args.writer = None
-    if args.distributed and args.gpu == 0:
+    if not args.distributed or args.rank == 0:
         args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, 'log/lincls'))
 
     # start training
     print("=> begin training")
     args.best_acc = 0
-    args.global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
-        start_time = time.time()
-
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
@@ -271,11 +223,12 @@ def main(gpu, args):
         lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
-        train_accu1, train_accu5, train_loss = utils.train_epoch(
+        train_loss, train_accu1, train_accu5 = utils.train_epoch(
             train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        test_accu1, test_accu5, test_loss = utils.evaluate(test_loader, model, criterion, args)
+        test_loss, test_accu1, test_accu5 = utils.evaluate(
+            test_loader, model, criterion, epoch, args)
 
         # remember best acc@1 and save checkpoint
         is_best = test_accu1 > args.best_acc
@@ -297,11 +250,6 @@ def main(gpu, args):
             args.writer.add_scalar("Accu/train", train_accu1, epoch)
             args.writer.add_scalar("Accu/test", test_accu1, epoch)
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
-
-        print(f"Epoch: {epoch} "
-              f"Train loss: {train_loss:.4f} Acc@1: {train_accu1:.2f} Acc@5: {train_accu5:.2f} "
-              f"Test loss: {test_loss:.4f} Acc@1: {test_accu1:.2f} Acc@5: {test_accu5:.2f} "
-              f"Epoch time: {time.time() - start_time:.1f}s")
 
 
 if __name__ == '__main__':

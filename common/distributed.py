@@ -89,3 +89,57 @@ def convert_model(args, model):
         print("Use multi-GPU DataParallel for training")
         model = torch.nn.DataParallel(model).to(args.device)
     return model
+
+
+@torch.no_grad()
+def all_gather(tensor):
+    """
+    Performs all_gather operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_gather has no gradient.
+    """
+    if not dist.is_available() or \
+       not dist.is_initialized() or \
+       dist.get_world_size() < 2:
+        output = tensor
+    else:
+        tensors_gather = [torch.ones_like(tensor)
+            for _ in range(dist.get_world_size())]
+        dist.all_gather(tensors_gather, tensor, async_op=False)
+        output = torch.cat(tensors_gather, dim=0)
+    return output
+
+
+@torch.no_grad()
+def all_reduce(tensor):
+    """
+    Performs all_reduce operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_reduce has no gradient.
+    """
+    if not dist.is_available() or \
+       not dist.is_initialized() or \
+       dist.get_world_size() < 2:
+        output = tensor
+    else:
+        output = tensor.data.clone()
+        dist.all_reduce(output.div_(dist.get_world_size()))
+    return output
+
+    
+class GatherLayer(torch.autograd.Function):
+    '''Gather tensors from all process, supporting backward propagation.
+    https://github.com/open-mmlab/OpenSelfSup/blob/696d04950e55d504cf33bc83cfadbb4ece10fbae/openselfsup/models/utils/gather_layer.py
+    '''
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        output = [torch.zeros_like(input) \
+            for _ in range(dist.get_world_size())]
+        dist.all_gather(output, input)
+        return tuple(output)
+
+    @staticmethod
+    def backward(ctx, *grads):
+        input, = ctx.saved_tensors
+        grad_out = torch.zeros_like(input)
+        grad_out[:] = grads[dist.get_rank()]
+        return grad_out
