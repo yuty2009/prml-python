@@ -39,8 +39,8 @@ def train_epoch(data_loader, model, criterion, optimizer, epoch, args):
         accuks = 100 * total_corrects / total_num
 
         if show_bar:
-            info = "Train Epoch: [{}/{}] Loss: {:.4f} ".format(
-                epoch, args.epochs, total_loss / total_num)
+            info = "Train Epoch: [{}/{}] lr: {:.6f} Loss: {:.4f} ".format(
+                epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss/len(data_loader))
             info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
                             for k, accuk in zip(args.topk, accuks)])
             data_bar.set_description(info)
@@ -79,7 +79,7 @@ def evaluate(data_loader, model, criterion, epoch, args):
 
             if show_bar:
                 info = "Test  Epoch: [{}/{}] Loss: {:.4f} ".format(
-                    epoch, args.epochs, total_loss / total_num)
+                    epoch, args.epochs, total_loss/len(data_loader))
                 info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
                                 for k, accuk in zip(args.topk, accuks)])
                 data_bar.set_description(info)
@@ -94,7 +94,7 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
     elif args.schedule in ['step', 'stepwise']:  # stepwise lr schedule
         for milestone in args.lr_drop:
-            lr *= 0.1 if epoch >= milestone else 1.
+            lr *= 0.1 if epoch >= int(milestone * args.epochs) else 1.
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 

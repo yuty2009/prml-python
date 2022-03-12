@@ -12,11 +12,12 @@ class MoCo(nn.Module):
     https://arxiv.org/abs/1911.05722
     """
     def __init__(
-        self, encoder, encoder_dim=2048, dim=128,
+        self, encoder, encoder_dim=2048, feature_dim=512, dim=128,
         K=65536, m=0.999, T=0.07, mlp=False, symmetric=False):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
+        feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
         m: moco momentum of updating key encoder (default: 0.999)
@@ -36,10 +37,10 @@ class MoCo(nn.Module):
             self.projector = nn.Linear(encoder_dim, dim)
         else:
             self.projector = nn.Sequential(
-                nn.Linear(encoder_dim, encoder_dim, bias=False),
-                nn.BatchNorm1d(encoder_dim),
+                nn.Linear(encoder_dim, feature_dim, bias=False),
+                nn.BatchNorm1d(feature_dim),
                 nn.ReLU(inplace=True),
-                nn.Linear(encoder_dim, dim))
+                nn.Linear(feature_dim, dim))
 
         self.model = nn.Sequential(self.encoder, self.projector)
         self.model_momentum = copy.deepcopy(self.model)

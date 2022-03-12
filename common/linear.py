@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 
+from matplotlib.pyplot import axis
+import numpy as np
 import scipy as sp
-from common.utils import *
-from common.optimizer import *
+from utils import *
+from optimizer import *
 
 
 class LinearModel(object):
@@ -43,6 +44,100 @@ class PCA(LinearModel):
 
     def predict(self, X, args=None):
         return np.dot(X, self.PC)
+
+
+class kNN(LinearModel):
+    """k-nearest neighbor classifier"""
+
+    def __init__(self, num_classes=10, k=10):
+        super().__init__()
+        self.k = k
+        self.num_classes = num_classes
+
+    def fit(self, X, y=None, args=None):
+        self.X = X
+        self.y = y
+
+    def predict(self, X, args=None):
+        return super().predict(X, args)
+
+
+class BernoulliNB(LinearModel):
+    """Naive Bayesian classifier when feature vectors are binary
+    X: N by P feature matrix, N number of samples, P number of features
+    y: N by 1 target vector
+    Refer to P. 69 of PRML
+    """
+
+    def __init__(self, num_classes=10, eps=1e-9):
+        super().__init__()
+        self.eps = eps
+        self.num_classes = num_classes
+        self.priors = np.zeros(num_classes, dtype=float) # K by 1
+
+    def fit(self, X, y=None, args=None):
+        self.thetas = np.zeros((self.num_classes, X.shape[-1]), dtype=float) # K by P
+        self.class_counts = np.zeros(self.num_classes, dtype=int) # K by 1
+        for k in range(self.num_classes):
+            idx = np.argwhere(y==k)
+            self.class_counts[k] = len(idx)
+            self.thetas[k, :] = np.mean(X[idx, :], axis=0)
+        # Laplace smoothing
+        self.priors = (self.class_counts+1.) / (np.sum(self.class_counts+1.))
+        self.log_priors = np.log(self.priors + self.eps) # K by 1
+
+    def predict(self, X, args=None):
+        X0 = not X
+        logT1 = np.log(self.thetas + self.eps) # K by P
+        logT0 = np.log(1 - self.thetas + self.eps) # K by P
+        yp = np.zeros((X.shape[0], self.num_classes), dtype=float) # N by K
+        for k in range(self.num_classes):
+            L1 = np.zeros_like(X) # N by P
+            L0 = np.zeros_like(X0) # N by P
+            for n in range(X.shape[0]):
+                L1[n, :] = X[n, :] * logT1[k, :]
+                L0[n, :] = X0[n, :] * logT0[k, :]
+            yp[:, k] = np.sum(L1+L0, axis=-1) + self.log_priors[k] # N by 1
+        yy = np.argmax(softmax(yp), axis=-1)
+        return yy, yp
+
+
+class GaussianNB(LinearModel):
+    """Naive Bayesian classifier when feature vectors are continuous
+    X: N by P feature matrix, N number of samples, P number of features
+    y: N by 1 target vector
+    Refer to P. 69 of PRML
+    """
+
+    def __init__(self, num_classes=10, eps=1e-9):
+        super().__init__()
+        self.eps = eps
+        self.num_classes = num_classes
+        self.priors = np.zeros(num_classes, dtype=float) # K by 1
+
+    def fit(self, X, y=None, args=None):
+        self.mu = np.zeros((self.num_classes, X.shape[-1]), dtype=float) # K by P
+        self.sigma2 = np.zeros((self.num_classes, X.shape[-1]), dtype=float) # K by P
+        self.class_counts = np.zeros(self.num_classes, dtype=int) # K by 1
+        for k in range(self.num_classes):
+            idx = np.argwhere(y==k).squeeze()
+            self.class_counts[k] = len(idx)
+            self.mu[k, :] = np.mean(X[idx, :], axis=0)
+            self.sigma2[k, :] = np.var(X[idx, :], axis=0)
+        self.sigma2 += self.sigma2.max() * self.eps # variance smoothing
+        # Laplace smoothing
+        self.priors = (self.class_counts+1.) / (np.sum(self.class_counts+1.))
+        self.log_priors = np.log(self.priors + self.eps)
+
+    def predict(self, X, args=None):
+        yp = np.zeros((X.shape[0], self.num_classes), dtype=float) # N by K
+        for k in range(self.num_classes):
+            X1 = X - np.repeat(self.mu[k:k+1, :], repeats=X.shape[0], axis=0)
+            inv_Sigma = np.diag(1. / self.sigma2[k, :])
+            yp[:, k] = -0.5 * np.diag(np.dot(np.dot(X1, inv_Sigma), np.transpose(X1))) \
+                       -0.5 * np.sum(np.log(self.sigma2[k, :])) + self.log_priors[k] # N by 1
+        yy = np.argmax(softmax(yp), axis=-1)
+        return yy, yp
 
 
 class RidgeRegression(LinearModel):
@@ -243,7 +338,28 @@ class SoftmaxClassifier(LinearModel):
 
 
 if __name__ == "__main__":
-    X = np.random.rand(5, 50)
-    y = np.array([0, 1, 2, 3, 4])
-    model = SoftmaxClassifier()
-    W = model.fit(X, y)
+    
+    #Loading the Dataset
+    from sklearn.datasets import load_breast_cancer
+    from sklearn.model_selection import train_test_split
+    from sklearn.naive_bayes import GaussianNB as GNB
+    from sklearn import metrics
+
+    dataloader = load_breast_cancer()
+    # keeping 80% as training data and 20% as testing data.
+    X_train, X_test, y_train, y_test = train_test_split(
+        dataloader.data, dataloader.target, test_size=0.2, random_state=20)
+
+    model0 = GNB()
+    model = GaussianNB(num_classes=2)
+    # model = SoftmaxClassifier()
+
+    model0.fit(X_train, y_train)
+    model.fit(X_train, y_train)
+    y_pred0 = model0.predict(X_test)
+    y_pred, _ = model.predict(X_test)
+
+    accu0 = metrics.accuracy_score(y_pred0, y_test)
+    accu = metrics.accuracy_score(y_pred, y_test)
+    # accu = np.sum(np.equal(y_pred, y_test))/len(y_test)
+    print(f"accu0 is {accu0} and accu is {accu}")

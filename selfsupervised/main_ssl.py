@@ -53,7 +53,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')
-parser.add_argument('--lr_drop', default=[120, 160], nargs='*', type=int,
+parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
@@ -107,7 +107,7 @@ def main(gpu, args):
 
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.data_dir))
-    train_dataset = get_train_dataset(args)
+    train_dataset, memory_dataset, test_dataset = get_train_dataset(args, evaluate=True)
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -117,6 +117,12 @@ def main(gpu, args):
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+    memory_loader = torch.utils.data.DataLoader(
+        memory_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
 
     # create model
     print("=> creating model '{}'".format(args.arch))
@@ -152,10 +158,12 @@ def main(gpu, args):
 
     args.writer = None
     if not args.distributed or args.rank == 0:
-        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/{args.ssl}"))
+        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/ssl_{args.ssl}"))
 
     # start training
     print("=> begin training")
+    args.knn_k = 200
+    args.knn_t = 0.1
     for epoch in range(args.start_epoch, args.epochs):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
@@ -165,6 +173,8 @@ def main(gpu, args):
 
         # train for one epoch
         train_loss = train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args)
+        # evaluate for one epoch
+        test_accu1, test_accu5 = evaluate_ssl(memory_loader, test_loader, model.module.encoder, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
@@ -178,6 +188,7 @@ def main(gpu, args):
         
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)
+            args.writer.add_scalar("Accu/test", test_accu1, epoch)
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
 
 

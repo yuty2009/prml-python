@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, random_split
+import os
+import argparse
 import numpy as np
 import scipy.signal as sig
 import matplotlib.pyplot as plt
-from common.utils import *
-from common.torchutils import train_epoch, evaluate, DEVICE
+
+import torch
+import torch.nn as nn
+
+import sys; sys.path.append(os.path.dirname(__file__)+"/../")
+from utils import *
+from torchutils import train_epoch, evaluate
 
 
 class SimpleModel(nn.Module):
@@ -32,7 +36,7 @@ class SimpleTransform(object):
         return torch.unsqueeze(x, dim=0)
 
 
-class SimpleDataset(Dataset):
+class SimpleDataset(torch.utils.data.Dataset):
     def __init__(self, xs, ys, transforms=None):
         if transforms == None:
             self.xs = xs
@@ -76,29 +80,33 @@ torch.manual_seed(123456)
 tf = SimpleTransform()
 dataset = SimpleDataset(xs, ys, tf)
 
-n_folds = 10
-n_epochs = 20
-batch_size = 20
-for i in range(n_folds):
-    trainset, testset = random_split(dataset, [360, 40])
+parser = argparse.ArgumentParser()
+args = parser.parse_args()
+args.epochs = 20
+args.batch_size = 20
+args.num_workers = 16
+args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = SimpleModel(L, 2).to(DEVICE)
-    loss_fn = torch.nn.NLLLoss()
+n_folds = 10
+for i in range(n_folds):
+    trainset, testset = torch.utils.data.random_split(dataset, [360, 40])
+    trainloader = torch.utils.data.DataLoader(
+        trainset, batch_size=args.batch_size, shuffle=True,
+        num_workers=args.num_workers, pin_memory=True)
+    testloader = torch.utils.data.DataLoader(
+        testset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.num_workers, pin_memory=True)
+
+    model = SimpleModel(L, 2).to(args.device)
+    criterion = nn.CrossEntropyLoss().to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-3)
 
-    for epoch in range(1, n_epochs+1):
-        start = time.time()
+    for epoch in range(1, args.epochs+1):
+        train_loss, train_accu = train_epoch(
+            trainloader, model, criterion, optimizer, epoch, args)
+        test_loss, test_accu = evaluate(
+            testloader, model, criterion, epoch, args)
 
-        train_accu, train_loss = train_epoch(
-            model, trainset, loss_fn=loss_fn, optimizer=optimizer,
-            batch_size=batch_size, device=DEVICE)
-        test_accu, test_loss  = evaluate(
-            model, testset, loss_fn=loss_fn, batch_size=batch_size, device=DEVICE)
-
-        print(f"Epoch: {epoch}, "
-              f"Train accu: {train_accu:.3f}, loss: {train_loss:.3f}, "
-              f"Test accu:  {test_accu:.3f},  loss: {test_loss:.3f}, "
-              f"Epoch time = {time_since(start, 1/n_epochs, epoch/n_epochs)}")
 
 ks = model.features.weight.cpu().detach().numpy()
 k1 = ks[0, 0, :]

@@ -33,7 +33,7 @@ parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10',
 parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('--pretrained', 
-                    default='/home/yuty2009/data/cifar10/checkpoint/ssl_moco_v1_resnet18/chkpt_0200.pth.tar',
+                    default='/home/yuty2009/data/cifar10/checkpoint/ssl_moco_v1_resnet50/chkpt_0200.pth.tar',
                     metavar='PATH', help='path to pretrained model (default: none)')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
@@ -59,7 +59,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')
-parser.add_argument('--lr_drop', default=[60, 80], nargs='*', type=int,
+parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
@@ -210,7 +210,7 @@ def main(gpu, args):
 
     args.writer = None
     if not args.distributed or args.rank == 0:
-        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, 'log/lincls'))
+        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/lincls_{args.ssl}"))
 
     # start training
     print("=> begin training")
@@ -242,7 +242,7 @@ def main(gpu, args):
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
                     is_best=is_best,
-                    save_dir=os.path.join(args.output_dir, f"checkpoint/{args.ssl}_lincls"))
+                    save_dir=os.path.join(args.output_dir, f"checkpoint/lincls_{args.ssl}_{args.arch}"))
 
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)

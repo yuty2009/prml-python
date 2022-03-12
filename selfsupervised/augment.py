@@ -68,12 +68,13 @@ def get_transforms(type='', size=224, mean_std=None):
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size),
-                transforms.RandomHorizontalFlip(),
+                transforms.RandomHorizontalFlip(), # with 0.5 probability
                 transforms.RandomApply([
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
                 ], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
-                transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+                # the image size of cifar10 is too small to apply gaussian blur
+                # transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
                 transforms.ToTensor(),
                 normalize
             ])

@@ -10,13 +10,13 @@ from gather import GatherLayer
 
 
 class SimCLR(nn.Module):
-    def __init__(self, encoder, encoder_dim=2048, dim=128, T=0.07, proj_bn=True):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=512, dim=128, T=0.5):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
+        feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
         T: softmax temperature (default: 0.07)
-        proj_bn: applying batch normalization or not in projector
         """
         super(SimCLR, self).__init__()
 
@@ -25,20 +25,12 @@ class SimCLR(nn.Module):
         self.world_size = dist.get_world_size()
 
         self.encoder = encoder
-        if proj_bn:
-            self.projector = nn.Sequential (
-                nn.Linear(encoder_dim, encoder_dim, bias=False),
-                nn.BatchNorm1d(encoder_dim),
-                nn.ReLU(),
-                nn.Linear(encoder_dim, dim, bias=False),
-                nn.BatchNorm1d(dim)
-            )
-        else:
-            self.projector = nn.Sequential (
-                nn.Linear(encoder_dim, encoder_dim),
-                nn.ReLU(),
-                nn.Linear(encoder_dim, dim),
-            )
+        self.projector = nn.Sequential (
+            nn.Linear(encoder_dim, feature_dim, bias=False),
+            nn.BatchNorm1d(feature_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(feature_dim, dim),
+        )
 
     def forward(self, x_i, x_j):
         # encoding
@@ -51,14 +43,14 @@ class SimCLR(nn.Module):
         z_i = nn.functional.normalize(z_i, dim=1)
         z_j = nn.functional.normalize(z_j, dim=1)
 
-        logits, labels = self.calc_loss_1(z_i, z_j)
+        logits, labels = self.calc_loss_2(z_i, z_j)
 
         return logits, labels
 
     def calc_loss_1(self, z_i, z_j):
-        N = z_i.shape[0] * self.world_size
+        N = z_i.shape[0] # * self.world_size
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
-        z = torch.cat(GatherLayer.apply(z), dim=0)
+        # z = torch.cat(GatherLayer.apply(z), dim=0)
         # [2N, 2N]
         sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.T
         idx = torch.arange(2*N).roll(N)
@@ -72,9 +64,9 @@ class SimCLR(nn.Module):
         return logits, labels
 
     def calc_loss_2(self, z_i, z_j):
-        N = z_i.shape[0] * self.world_size
+        N = z_i.shape[0] # * self.world_size
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
-        z = torch.cat(GatherLayer.apply(z), dim=0)
+        # z = torch.cat(GatherLayer.apply(z), dim=0)
 
         sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.T
 
