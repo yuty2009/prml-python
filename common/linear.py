@@ -1,5 +1,4 @@
 
-from matplotlib.pyplot import axis
 import numpy as np
 import scipy as sp
 from utils import *
@@ -106,7 +105,6 @@ class GaussianNB(LinearModel):
     """Naive Bayesian classifier when feature vectors are continuous
     X: N by P feature matrix, N number of samples, P number of features
     y: N by 1 target vector
-    Refer to P. 69 of PRML
     """
 
     def __init__(self, num_classes=10, eps=1e-9):
