@@ -1,6 +1,8 @@
 
 import os
+import json
 import random
+import datetime
 import warnings
 import argparse
 import numpy as np
@@ -118,10 +120,10 @@ def main(gpu, args):
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
     memory_loader = torch.utils.data.DataLoader(
-        memory_dataset, batch_size=args.batch_size, shuffle=False,
+        memory_dataset, batch_size=500, shuffle=False,
         num_workers=args.workers, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False,
+        test_dataset, batch_size=500, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
     # create model
@@ -156,14 +158,18 @@ def main(gpu, args):
     model = dist.convert_model(args, model)
     torch.backends.cudnn.benchmark = True
 
+    args.knn_k = 200
+    args.knn_t = 0.1
+
     args.writer = None
     if not args.distributed or args.rank == 0:
-        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/ssl_{args.ssl}"))
+        with open(args.output_dir + "/args.json", 'w') as fid:
+            default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
+            json.dump(args.__dict__, fid, indent=2, default=default)
+        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "log"))
 
     # start training
     print("=> begin training")
-    args.knn_k = 200
-    args.knn_t = 0.1
     for epoch in range(args.start_epoch, args.epochs):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
@@ -184,7 +190,7 @@ def main(gpu, args):
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
                     is_best=False,
-                    save_dir=os.path.join(args.output_dir, f"checkpoint/ssl_{args.ssl}_{args.arch}"))
+                    save_dir=os.path.join(args.output_dir, f"checkpoint"))
         
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)
@@ -196,8 +202,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    output_prefix = f"ssl_{args.ssl}_{args.arch}"
+    output_prefix += "/session_" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     if not hasattr(args, 'output_dir'):
         args.output_dir = args.data_dir
+    args.output_dir = os.path.join(args.output_dir, output_prefix)
+    os.makedirs(args.output_dir)
+    print("=> results will be saved to {}".format(args.output_dir))
 
     args = dist.init_distributed_mode(args)
     if args.mp_dist:

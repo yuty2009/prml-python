@@ -1,6 +1,7 @@
 
 import os
 import random
+import datetime
 import warnings
 import argparse
 import numpy as np
@@ -210,7 +211,7 @@ def main(gpu, args):
 
     args.writer = None
     if not args.distributed or args.rank == 0:
-        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log/lincls_{args.ssl}"))
+        args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, f"log"))
 
     # start training
     print("=> begin training")
@@ -242,7 +243,7 @@ def main(gpu, args):
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
                     is_best=is_best,
-                    save_dir=os.path.join(args.output_dir, f"checkpoint/lincls_{args.ssl}_{args.arch}"))
+                    save_dir=os.path.join(args.output_dir, f"checkpoint"))
 
         if hasattr(args, 'writer') and args.writer:
             args.writer.add_scalar("Loss/train", train_loss, epoch)
@@ -256,8 +257,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    output_prefix = f"ssl_eval_{args.ssl}_{args.arch}"
+    output_prefix += "/session_" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     if not hasattr(args, 'output_dir'):
         args.output_dir = args.data_dir
+    args.output_dir = os.path.join(args.output_dir, output_prefix)
+    os.makedirs(args.output_dir)
+    print("=> results will be saved to {}".format(args.output_dir))
 
     args = dist.init_distributed_mode(args)
     if args.mp_dist:

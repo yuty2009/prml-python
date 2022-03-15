@@ -76,6 +76,28 @@ class KNNClassifier(nn.Module):
         return pred_labels
 
 
+class NT_Xent(nn.Module):
+    def __init__(self, temperature=0.5):
+        super(NT_Xent, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, z_i, z_j):
+        N = z_i.shape[0]
+        # [2*B, D]
+        out = torch.cat([z_i, z_j], dim=0)
+        # [2*B, 2*B]
+        sim_matrix = torch.exp(torch.mm(out, out.t().contiguous()) / self.temperature)
+        mask = (torch.ones_like(sim_matrix) - torch.eye(2 * N, device=sim_matrix.device)).bool()
+        # [2*B, 2*B-1]
+        sim_matrix = sim_matrix.masked_select(mask).view(2 * N, -1)
+        # compute loss
+        pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / self.temperature)
+        # [2*B]
+        pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+        loss = (- torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
+        return loss
+
+
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
     total_loss = 0.0
@@ -165,8 +187,6 @@ def evaluate_ssl(memory_loader, test_loader, model, epoch, args):
 
 def get_train_dataset(args, evaluate=False):
     if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
-        args.lr = 6e-2 # 6e-2 for cifar10
-        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.image_size = 32
         args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         train_dataset = datasets.CIFAR10(
@@ -248,6 +268,8 @@ def get_base_encoder(base_encoder, args):
 
 def get_ssl_model_and_criterion(base_encoder, args):
     if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
+        # args.lr = 6e-2 # 6e-2 for cifar10
+        # args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.dim = 128
         args.moco_k = 4096 # 4096 for cifar10
@@ -261,6 +283,8 @@ def get_ssl_model_and_criterion(base_encoder, args):
         criterion = nn.CrossEntropyLoss()
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
+        # args.lr = 6e-2 # 6e-2 for cifar10
+        # args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.dim = 128
         args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
@@ -275,6 +299,8 @@ def get_ssl_model_and_criterion(base_encoder, args):
         criterion = nn.CrossEntropyLoss()
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
+        # args.lr = 1e-3 # 1e-3 for cifar10
+        # args.weight_decay = 1e-6 # 1e-6 for cifar10
         args.feature_dim = 512
         args.dim = 128
         args.temperature = 0.5
