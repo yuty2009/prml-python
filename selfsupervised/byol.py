@@ -6,9 +6,10 @@ import torch.nn as nn
 
 class BYOL(nn.Module):
     """
-    Build a BYOL model.
+    Build a BYOL model. This model is adapted from SimSiam
     """
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512, m=0.999):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512,
+        m=0.999, num_mlp_layers=2):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
@@ -23,20 +24,25 @@ class BYOL(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        self.projector = nn.Sequential(nn.Linear(encoder_dim, encoder_dim, bias=False),
-                                        nn.BatchNorm1d(encoder_dim),
+        if num_mlp_layers == 2:
+            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(encoder_dim, encoder_dim, bias=False),
-                                        nn.BatchNorm1d(encoder_dim),
-                                        nn.ReLU(inplace=True), # second layer
-                                        nn.Linear(encoder_dim, feature_dim, bias=False),
+                                        nn.Linear(feature_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim, affine=False)) # output layer
-
+        elif num_mlp_layers == 3:
+            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
+                                        nn.ReLU(inplace=True), # first layer
+                                        nn.Linear(feature_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
+                                        nn.ReLU(inplace=True), # second layer
+                                        nn.Linear(feature_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim, affine=False)) # output layer
         self.model = nn.Sequential(self.encoder, self.projector)
         self.model_momentum = copy.deepcopy(self.model)
         for p in self.model_momentum.parameters():
             p.requires_grad = False
-
         # build a 2-layer predictor
         self.predictor = nn.Sequential(nn.Linear(feature_dim, dim, bias=False),
                                         nn.BatchNorm1d(dim),

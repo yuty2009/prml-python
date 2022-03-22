@@ -45,7 +45,7 @@ class LinearClassifier(nn.Module):
 #                    and https://colab.research.google.com/github/facebookresearch/
 #                        moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb
 class KNNClassifier(nn.Module):
-    def __init__(self, num_classes, knn_k, knn_t):
+    def __init__(self, num_classes, knn_k=200, knn_t=0.1):
         super(KNNClassifier, self).__init__()
         self.knn_k = knn_k
         self.knn_t = knn_t
@@ -115,7 +115,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
 
         if str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
             p1, p2, t1, t2 = model(images[0], images[1])
-            loss = -0.5 * (criterion(p1, t2) + criterion(p2, t1))
+            loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
         else: # 'moco'
             if hasattr(args, 'symmetric') and args.symmetric:
                 p1, p2, t1, t2 = model(images[0], images[1])
@@ -311,7 +311,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
 
     elif str.lower(args.ssl) in ['byol']:
         args.feature_dim = 512
-        args.dim = 256
+        args.dim = 128
         args.byol_m = 0.9
         model = byol.BYOL(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
@@ -320,7 +320,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
     
     elif str.lower(args.ssl) in ['simsiam']:
         args.feature_dim = 512
-        args.dim = 256
+        args.dim = 128
         model = simsiam.SimSiam(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim)
         criterion = nn.CosineSimilarity(dim=1)

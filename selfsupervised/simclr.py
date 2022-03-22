@@ -43,7 +43,7 @@ class SimCLR(nn.Module):
         z_i = nn.functional.normalize(z_i, dim=1)
         z_j = nn.functional.normalize(z_j, dim=1)
 
-        logits, labels = self.calc_loss_2(z_i, z_j)
+        logits, labels = self.calc_loss_1(z_i, z_j)
 
         return logits, labels
 
