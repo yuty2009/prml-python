@@ -119,7 +119,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         else: # 'moco'
             if hasattr(args, 'symmetric') and args.symmetric:
                 p1, p2, t1, t2 = model(images[0], images[1])
-                loss = -0.5 * (criterion(p1, t1) + criterion(p2, t2))
+                loss = 0.5 * (criterion(p1, t1) + criterion(p2, t2))
             else:
                 p1, t1 = model(images[0], images[1])
                 loss = criterion(p1, t1)
@@ -276,6 +276,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.moco_m = 0.99 # 0.99 for cifar10
         args.temperature = 0.1 # 0.1 for cifar10
         args.mlp = False
+        args.symmetric = True
         model = moco.MoCo(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
             args.moco_k, args.moco_m, args.temperature, args.mlp,
@@ -292,6 +293,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.temperature = 0.1 # 0.1 for cifar10
         args.mlp = True
         args.schedule = 'cos'
+        args.symmetric = True
         model = moco.MoCo(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
             args.moco_k, args.moco_m, args.temperature, args.mlp,
