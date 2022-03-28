@@ -28,11 +28,10 @@ class GaussianBlur(object):
         return x
 
 
-def get_transforms(type='', size=224, mean_std=None):
-    if mean_std is None:
-        normalize = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    else:
+def get_transforms(type='', size=224, mean_std=None, color_jitter_s=1.0):
+    s = color_jitter_s
+    normalize = None
+    if mean_std is not None:
         normalize = transforms.Normalize(
             mean=mean_std[0], std=mean_std[1])
 
@@ -58,7 +57,7 @@ def get_transforms(type='', size=224, mean_std=None):
                 transforms.RandomResizedCrop(size),
                 transforms.RandomHorizontalFlip(),  # with 0.5 probability
                 transforms.RandomApply([
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),
+                    transforms.ColorJitter(0.4*s, 0.4*s, 0.4*s, 0.1*s),
                 ], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
                 transforms.ToTensor(),
@@ -70,7 +69,7 @@ def get_transforms(type='', size=224, mean_std=None):
                 transforms.RandomResizedCrop(size),
                 transforms.RandomHorizontalFlip(), # with 0.5 probability
                 transforms.RandomApply([
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+                    transforms.ColorJitter(0.4*s, 0.4*s, 0.4*s, 0.1*s)
                 ], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
                 # the image size of cifar10 is too small to apply gaussian blur
@@ -79,3 +78,31 @@ def get_transforms(type='', size=224, mean_std=None):
                 normalize
             ])
         
+
+def get_multicrop_transforms(size_crops, num_crops, mean_std=None, color_jitter_s=1.0):
+    assert len(size_crops) == len(num_crops)
+
+    s = color_jitter_s
+    normalize = None
+    if mean_std is not None:
+        normalize = transforms.Normalize(
+            mean=mean_std[0], std=mean_std[1])
+
+    trans = []
+    for i in range(len(size_crops)):
+        randomresizedcrop = transforms.RandomResizedCrop(
+                size_crops[i],
+                # scale=(min_scale_crops[i], max_scale_crops[i]),
+            )
+        trans.extend([transforms.Compose([
+                randomresizedcrop,
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.8*s, 0.8*s, 0.8*s, 0.2*s)
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ToTensor(),
+                normalize])
+            ] * num_crops[i])
+    
+    return trans
