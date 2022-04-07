@@ -10,17 +10,17 @@ from gather import GatherLayer
 
 
 class SimCLR(nn.Module):
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=512, dim=128, T=0.5):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=512, dim=128, temperature=0.5):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
         feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
-        T: softmax temperature (default: 0.07)
+        temperature: softmax temperature (default: 0.07)
         """
         super(SimCLR, self).__init__()
 
-        self.T = T
+        self.temperature = temperature
         self.similarity_f = nn.CosineSimilarity(dim=2)
         self.world_size = dist.get_world_size()
 
@@ -52,7 +52,7 @@ class SimCLR(nn.Module):
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
         # z = torch.cat(GatherLayer.apply(z), dim=0)
         # [2N, 2N]
-        sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.T
+        sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.temperature
         idx = torch.arange(2*N).roll(N)
         labels = torch.eye(2*N, device=sim.device)[idx]
 
@@ -68,7 +68,7 @@ class SimCLR(nn.Module):
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
         # z = torch.cat(GatherLayer.apply(z), dim=0)
 
-        sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.T
+        sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.temperature
 
         sim_i_j = torch.diag(sim, N)
         sim_j_i = torch.diag(sim, -N)

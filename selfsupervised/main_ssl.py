@@ -128,7 +128,6 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    args.symmetric = False
     base_encoder = models.__dict__[args.arch]()
     base_encoder = get_base_encoder(base_encoder, args)
     model, criterion = get_ssl_model_and_criterion(base_encoder, args)

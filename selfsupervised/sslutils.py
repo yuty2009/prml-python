@@ -9,7 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, byol, simsiam
+import moco, simclr, byol, simsiam, swav
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -108,25 +108,36 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-    for images, _ in data_bar:
+    for it, (images, _) in enumerate(data_bar):
+        iteration = epoch * len(data_bar) + it
 
-        images[0] = images[0].to(args.device)
-        images[1] = images[1].to(args.device)
+        for i in range(len(images)):
+            images[i] = images[i].to(args.device)
 
-        if str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
-            p1, p2, t1, t2 = model(images[0], images[1])
-            loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
-        else: # 'moco'
+        if str.lower(args.ssl) in ['moco', 'moco_v1', 'moco_v2']: # 'moco'
             if hasattr(args, 'symmetric') and args.symmetric:
                 p1, p2, t1, t2 = model(images[0], images[1])
                 loss = 0.5 * (criterion(p1, t1) + criterion(p2, t2))
             else:
                 p1, t1 = model(images[0], images[1])
                 loss = criterion(p1, t1)
+        elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
+            p1, p2, t1, t2 = model(images[0], images[1])
+            loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
+        elif str.lower(args.ssl) in ['swav', 'deepcluster']:
+            loss = model(images)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
+
+        if str.lower(args.ssl) in ['swav', 'deepcluster']:
+            # cancel gradients for the prototypes
+            if iteration < args.freeze_prototypes_niters:
+                for name, p in model.named_parameters():
+                    if "prototypes" in name:
+                        p.grad = None
+
         optimizer.step()
 
         loss = dist.all_reduce(loss)
@@ -192,7 +203,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.CIFAR10(
             args.data_dir, train=True, download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.CIFAR10(
@@ -210,7 +221,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.STL10(
             args.data_dir, split="unlabeled", download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.STL10(
@@ -228,7 +239,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.ImageFolder(
             os.path.join(args.data_dir, 'train'),
             transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.ImageFolder(
@@ -248,23 +259,6 @@ def get_train_dataset(args, evaluate=False):
     else:
         return train_dataset
 
-
-def get_base_encoder(base_encoder, args):
-    module_list = []
-    for name, module in base_encoder.named_children():
-        if str.lower(args.dataset) not in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
-            if name == 'conv1':
-                module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-            if isinstance(module, nn.MaxPool2d):
-                continue
-        if isinstance(module, nn.Linear):
-            args.encoder_dim = module.weight.shape[1]
-            module_list.append(nn.Flatten(1))
-            continue
-        module_list.append(module)
-    base_encoder = nn.Sequential(*module_list)
-    return base_encoder
-    
 
 def get_ssl_model_and_criterion(base_encoder, args):
     if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
@@ -326,6 +320,17 @@ def get_ssl_model_and_criterion(base_encoder, args):
         model = simsiam.SimSiam(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim)
         criterion = nn.CosineSimilarity(dim=1)
+
+    elif str.lower(args.ssl) in ['swav']:
+        args.feature_dim = 512
+        args.dim = 128
+        args.swav_k = 0
+        args.temperature = 0.1
+        args.freeze_prototypes_niters = 313
+        model = swav.SwAV(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            args.swav_k, args.temperature)
+        criterion = nn.CrossEntropyLoss()
     
     else:
         raise NotImplementedError
@@ -334,6 +339,23 @@ def get_ssl_model_and_criterion(base_encoder, args):
     criterion = criterion.to(args.device)
 
     return model, criterion
+
+
+def get_base_encoder(base_encoder, args):
+    module_list = []
+    for name, module in base_encoder.named_children():
+        if str.lower(args.dataset) not in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
+            if name == 'conv1':
+                module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            if isinstance(module, nn.MaxPool2d):
+                continue
+        if isinstance(module, nn.Linear):
+            args.encoder_dim = module.weight.shape[1]
+            module_list.append(nn.Flatten(1))
+            continue
+        module_list.append(module)
+    base_encoder = nn.Sequential(*module_list)
+    return base_encoder
 
 
 def get_optimizer(model, args):
@@ -353,3 +375,4 @@ def get_optimizer(model, args):
         optimizer = torch.optim.Adam(
             model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     return optimizer
+

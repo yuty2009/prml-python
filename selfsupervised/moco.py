@@ -13,23 +13,23 @@ class MoCo(nn.Module):
     """
     def __init__(
         self, encoder, encoder_dim=2048, feature_dim=512, dim=128,
-        K=65536, m=0.999, T=0.07, mlp=False, symmetric=False):
+        queue_size=65536, m=0.999, temperature=0.07, mlp=False, symmetric=False):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
-        encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
+        encoder_dim: dimension of the encoder output (default: 2048 for resnets)
         feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
-        K: queue size; number of negative keys (default: 65536)
+        queue_size: queue size; number of negative keys (default: 65536)
         m: moco momentum of updating key encoder (default: 0.999)
-        T: softmax temperature (default: 0.07)
+        temperature: softmax temperature (default: 0.07)
         mlp: with a multi-layer projector (default: False)
         symmetric: use symmetric loss or not (default: False)
         """
         super(MoCo, self).__init__()
 
-        self.K = K
         self.m = m
-        self.T = T
+        self.queue_size = queue_size
+        self.temperature = temperature
         self.symmetric = symmetric
 
         self.encoder = encoder
@@ -48,9 +48,8 @@ class MoCo(nn.Module):
             p.requires_grad = False
 
         # create the queue
-        self.register_buffer("queue", torch.randn(dim, K))
+        self.register_buffer("queue", torch.randn(dim, queue_size))
         self.queue = nn.functional.normalize(self.queue, dim=0)
-
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
     @torch.no_grad()
@@ -69,11 +68,11 @@ class MoCo(nn.Module):
         batch_size = keys.shape[0]
 
         ptr = int(self.queue_ptr)
-        assert self.K % batch_size == 0  # for simplicity
+        assert self.queue_size % batch_size == 0  # for simplicity
 
         # replace the keys at ptr (dequeue and enqueue)
         self.queue[:, ptr:ptr + batch_size] = keys.T
-        ptr = (ptr + batch_size) % self.K  # move pointer
+        ptr = (ptr + batch_size) % self.queue_size  # move pointer
 
         self.queue_ptr[0] = ptr
 
@@ -179,7 +178,7 @@ class MoCo(nn.Module):
         logits = torch.cat([l_pos, l_neg], dim=1)
 
         # apply temperature
-        logits /= self.T
+        logits /= self.temperature
 
         # labels: positive key indicators
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
