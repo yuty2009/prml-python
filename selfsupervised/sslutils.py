@@ -9,7 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, byol, simsiam, swav
+import moco, simclr, byol, simsiam, swav, deepcluster
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -100,14 +100,14 @@ class NT_Xent(nn.Module):
 
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
-    total_loss = 0.0
-
+    
     show_bar = False
     if not hasattr(args, 'distributed') or not args.distributed or \
        not hasattr(args, 'rank') or args.rank == 0:
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
+    total_loss = 0.0
     for it, (images, _) in enumerate(data_bar):
         iteration = epoch * len(data_bar) + it
 
@@ -124,8 +124,16 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
             p1, p2, t1, t2 = model(images[0], images[1])
             loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
-        elif str.lower(args.ssl) in ['swav', 'deepcluster']:
-            loss = model(images)
+        elif str.lower(args.ssl) in ['swav']:
+            real_model = model.module if args.ngpus > 1 else model
+            # normalize the prototypes
+            with torch.no_grad():
+                w = real_model.prototypes.weight.data.clone()
+                w = nn.functional.normalize(w, dim=1, p=2)
+                real_model.prototypes.weight.copy_(w)
+            embedding, output = model(images)
+            embedding = embedding.detach()
+            loss = real_model.compute_loss(embedding, output, images[0].size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -325,12 +333,24 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.feature_dim = 512
         args.dim = 128
         args.swav_k = 0
+        args.num_prototypes = 3000
         args.temperature = 0.1
         args.freeze_prototypes_niters = 313
         model = swav.SwAV(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.swav_k, args.temperature)
+            args.swav_k, args.num_prototypes, args.temperature)
         criterion = nn.CrossEntropyLoss()
+    
+    elif str.lower(args.ssl) in ['deepcluster', 'deepcluster2']:
+        args.feature_dim = 512
+        args.dim = 128
+        args.num_prototypes = 3000
+        args.temperature = 0.1
+        args.freeze_prototypes_niters = 313
+        model = deepcluster.DeepCluster(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            args.num_prototypes)
+        criterion = nn.CrossEntropyLoss(ignore_index=-100)
     
     else:
         raise NotImplementedError

@@ -43,11 +43,11 @@ class SimCLR(nn.Module):
         z_i = nn.functional.normalize(z_i, dim=1)
         z_j = nn.functional.normalize(z_j, dim=1)
 
-        logits, labels = self.calc_loss_1(z_i, z_j)
+        logits, labels = self.compute_output_1(z_i, z_j)
 
         return logits, labels
 
-    def calc_loss_1(self, z_i, z_j):
+    def compute_output_1(self, z_i, z_j):
         N = z_i.shape[0] # * self.world_size
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
         # z = torch.cat(GatherLayer.apply(z), dim=0)
@@ -63,7 +63,7 @@ class SimCLR(nn.Module):
 
         return logits, labels
 
-    def calc_loss_2(self, z_i, z_j):
+    def compute_output_2(self, z_i, z_j):
         N = z_i.shape[0] # * self.world_size
         z = torch.cat((z_i, z_j), dim=0)  # [2N, D]
         # z = torch.cat(GatherLayer.apply(z), dim=0)

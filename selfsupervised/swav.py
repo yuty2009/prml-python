@@ -6,8 +6,8 @@ import torch.nn as nn
 
 class SwAV(nn.Module):
     def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, queue_size=0, temperature=0.1,
-        n_crops=[2], crops_for_assign=[0, 1], n_prototypes=3000, sinkhorn_iters=3, epsilon=0.05):
+        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, queue_size=0, num_prototypes=3000,
+        temperature=0.1, num_crops=[2], crops_for_assign=[0, 1], sinkhorn_iters=3, epsilon=0.05):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output (default: 2048 for resnets)
@@ -15,9 +15,9 @@ class SwAV(nn.Module):
         dim: projection dimension (default: 128)
         queue_size: queue size
         temperature: softmax temperature (default: 0.1)
-        n_crops: list of number of crops (example: [2, 6])
+        num_crops: list of number of crops (example: [2, 6])
         crops_for_assign: list of crops id used for computing assignments (default: [0, 1])
-        n_prototypes: number of cluster centroids (default: 3000)
+        num_prototypes: number of cluster centroids (default: 3000)
         sinkhorn_iters: number of iterations in Sinkhorn-Knopp algorithm
         epsilon: regularization parameter for Sinkhorn-Knopp algorithm
         """
@@ -25,7 +25,7 @@ class SwAV(nn.Module):
 
         self.queue_size = queue_size
         self.temperature = temperature
-        self.n_crops = n_crops
+        self.num_crops = num_crops
         self.crops_for_assign = crops_for_assign
         self.sinkhorn_iters = sinkhorn_iters
         self.epsilon = epsilon
@@ -41,10 +41,10 @@ class SwAV(nn.Module):
         )
         # prototype layer
         self.prototypes = None
-        if isinstance(n_prototypes, list):
-            self.prototypes = MultiPrototypes(dim, n_prototypes)
-        elif n_prototypes > 0:
-            self.prototypes = nn.Linear(dim, n_prototypes, bias=False)
+        if isinstance(num_prototypes, list):
+            self.prototypes = MultiPrototypes(dim, num_prototypes)
+        elif num_prototypes > 0:
+            self.prototypes = nn.Linear(dim, num_prototypes, bias=False)
 
         # create the queue
         if queue_size > 0:
@@ -71,18 +71,13 @@ class SwAV(nn.Module):
         z = self.projector(output)
         # normalize feature embeddings
         z = nn.functional.normalize(z, dim=1)
-        
-        # normalize the prototypes
-        with torch.no_grad():
-            w = self.prototypes.weight.data.clone()
-            w = nn.functional.normalize(w, dim=1)
-            self.prototypes.weight.copy_(w)
         # compute Z^T C
         output = self.prototypes(z)
-        z = z.detach()
+        return z, output
 
+    def compute_loss(self, embedding, output, batch_size):
         loss = 0
-        bs = inputs[0].size(0)
+        bs = batch_size
         for i, crop_id in enumerate(self.crops_for_assign):
             with torch.no_grad():
                 out = output[bs * crop_id: bs * (crop_id + 1)].detach()
@@ -96,27 +91,27 @@ class SwAV(nn.Module):
                         ), out))
                     # fill the queue
                     self.queue[i, bs:] = self.queue[i, :-bs].clone()
-                    self.queue[i, :bs] = z[crop_id * bs: (crop_id + 1) * bs]
+                    self.queue[i, :bs] = embedding[crop_id * bs: (crop_id + 1) * bs]
                 # get assignments
                 q = torch.exp(out / self.epsilon).t()
                 q = distributed_sinkhorn(q, self.sinkhorn_iters)[-bs:]
 
             # cluster assignment prediction
             subloss = 0
-            for v in np.delete(np.arange(np.sum(self.n_crops)), crop_id):
+            for v in np.delete(np.arange(np.sum(self.num_crops)), crop_id):
                 p = self.softmax(output[bs * v: bs * (v + 1)] / self.temperature)
                 subloss -= torch.mean(torch.sum(q * torch.log(p), dim=1))
-            loss += subloss / (np.sum(self.n_crops) - 1)
+            loss += subloss / (np.sum(self.num_crops) - 1)
         loss /= len(self.crops_for_assign)
 
         return loss
 
 
 class MultiPrototypes(nn.Module):
-    def __init__(self, output_dim, n_prototypes):
+    def __init__(self, output_dim, num_prototypes):
         super(MultiPrototypes, self).__init__()
-        self.n_heads = len(n_prototypes)
-        for i, k in enumerate(n_prototypes):
+        self.n_heads = len(num_prototypes)
+        for i, k in enumerate(num_prototypes):
             self.add_module("prototypes" + str(i), nn.Linear(output_dim, k, bias=False))
 
     def forward(self, x):

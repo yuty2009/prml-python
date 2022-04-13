@@ -6,6 +6,7 @@ import datetime
 import warnings
 import argparse
 import numpy as np
+from scipy.sparse import csr_matrix
 
 import torch
 import torch.multiprocessing as mp
@@ -15,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
+from augment import *
 from sslutils import *
 
 
@@ -23,7 +25,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='swav', type=str,
+parser.add_argument('--ssl', default='deepcluster2', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
@@ -109,7 +111,62 @@ def main(gpu, args):
 
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.data_dir))
-    train_dataset, memory_dataset, test_dataset = get_train_dataset(args, evaluate=True)
+    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
+        args.size_crops = [32]
+        args.num_crops = [2]
+        args.crops_for_assign = [0, 1]
+        args.image_size = 32
+        args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        train_dataset = datasets.CIFAR10(
+            args.data_dir, train=True, download=True,
+        )
+        memory_dataset = datasets.CIFAR10(
+            args.data_dir, train=True, download=True,
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+        test_dataset = datasets.CIFAR10(
+            args.data_dir, train=False, download=True,
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+
+    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
+        args.size_crops = [96]
+        args.num_crops = [2]
+        args.crops_for_assign = [0, 1]
+        args.image_size = 96
+        args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
+        train_dataset = datasets.STL10(
+            args.data_dir, split="train", download=True,
+        )
+        memory_dataset = datasets.STL10(
+            args.data_dir, split="train", download=True,
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+        test_dataset = datasets.STL10(
+            args.data_dir, split="test", download=True,
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+
+    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
+        args.size_crops = [224]
+        args.num_crops = [2]
+        args.crops_for_assign = [0, 1]
+        args.image_size = 224
+        args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        train_dataset = datasets.ImageFolder(
+            os.path.join(args.data_dir, 'train'),
+        )
+        memory_dataset = datasets.ImageFolder(
+            os.path.join(args.data_dir, 'train'),
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+        test_dataset = datasets.ImageFolder(
+            os.path.join(args.data_dir, 'val'),
+            transform=augment.get_transforms('test', args.image_size, args.mean_std)
+        )
+
+    multicrop_trans = get_multicrop_transforms(args.size_crops, args.num_crops, mean_std=args.mean_std)
+    train_dataset = MultiCropDataset(train_dataset, multicrop_trans, return_index=True)
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -167,6 +224,8 @@ def main(gpu, args):
             json.dump(args.__dict__, fid, indent=2, default=default)
         args.writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "log"))
 
+    mb_index, mb_embeddings = init_memory(train_loader, model, args)
+
     # start training
     print("=> begin training")
     for epoch in range(args.start_epoch, args.epochs):
@@ -176,8 +235,15 @@ def main(gpu, args):
         utils.adjust_learning_rate(optimizer, epoch, args)
         lr = optimizer.param_groups[0]["lr"]
 
+        assignments = cluster_memory(
+            model, mb_index, mb_embeddings, 
+            len(train_loader.dataset), args.dim, args.num_prototypes, args=args)
+        print("Clustering for epoch {} done.".format(epoch))
+
         # train for one epoch
-        train_loss = train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, mb_index, mb_embeddings = train_epoch(
+            train_loader, model, criterion, optimizer, epoch, args, 
+            mb_index, mb_embeddings, assignments)
         # evaluate for one epoch
         real_model = model.module if args.ngpus > 1 else model
         test_accu1, test_accu5 = evaluate_ssl(memory_loader, test_loader, real_model.encoder, epoch, args)
@@ -196,6 +262,166 @@ def main(gpu, args):
             args.writer.add_scalar("Loss/train", train_loss, epoch)
             args.writer.add_scalar("Accu/test", test_accu1, epoch)
             args.writer.add_scalar("Misc/learning_rate", lr, epoch)
+
+
+def train_epoch(data_loader, model, criterion, optimizer, epoch, args,
+                mb_index, mb_embeddings, assignments):
+    model.train()
+
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+    data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
+    
+    start_idx = 0
+    total_loss = 0.0
+    for it, (index, inputs) in enumerate(data_bar):
+        iteration = epoch * len(data_bar) + it
+
+        bs = inputs[0].size(0)
+        index = index.to(args.device)
+        for i in range(len(inputs)):
+            inputs[i] = inputs[i].to(args.device)
+
+        embeddings, outputs = model(inputs)
+
+        outputs /= args.temperature
+        targets = assignments[index].repeat(len(inputs)).to(args.device)
+        loss = criterion(outputs, targets)
+
+        # compute gradient and do SGD step
+        optimizer.zero_grad()
+        loss.backward()
+
+        # cancel gradients for the prototypes
+        if iteration < args.freeze_prototypes_niters:
+            for name, p in model.named_parameters():
+                if "prototypes" in name:
+                    p.grad = None
+
+        optimizer.step()
+
+        # ============ update memory banks ... ============
+        embeddings.detach()
+        mb_index[start_idx : start_idx + bs] = index
+        for i, crop_idx in enumerate(args.crops_for_assign):
+            mb_embeddings[i][start_idx : start_idx + bs] = \
+                embeddings[crop_idx * bs : (crop_idx + 1) * bs]
+        start_idx += bs
+
+        loss = dist.all_reduce(loss)
+        total_loss += loss.item()
+
+        if show_bar:
+            data_bar.set_description(
+                "Train Epoch: [{}/{}] lr: {:.6f} Loss: {:.4f}".format(
+                    epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss / len(data_loader)))
+
+    return total_loss / len(data_loader), mb_index, mb_embeddings
+
+
+def init_memory(data_loader, model, args):
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+
+    mb_size = len(data_loader) * args.batch_size
+    mb_index = torch.zeros(mb_size).long().to(args.device)
+    mb_embeddings = torch.zeros(len(args.crops_for_assign), mb_size, args.dim).to(args.device)
+
+    start_idx = 0
+    with torch.no_grad():
+        data_bar = tqdm.tqdm(data_loader, desc='Init memory bank') if show_bar else data_loader
+        for index, inputs in data_bar:
+            bs = inputs[0].size(0)
+            index = index.to(args.device)
+            for i in range(len(inputs)):
+                inputs[i] = inputs[i].to(args.device)
+            embeddings, outputs = model(inputs)
+            # fill the memory bank
+            mb_index[start_idx : start_idx + bs] = index
+            for i, crop_idx in enumerate(args.crops_for_assign):
+                mb_embeddings[i][start_idx : start_idx + bs] = \
+                    embeddings[crop_idx * bs : (crop_idx + 1) * bs]
+            start_idx += bs
+    
+    return mb_index, mb_embeddings
+
+
+def cluster_memory(
+    model, mb_index, mb_embeddings,
+    n_data, feature_dim, num_prototypes, n_iters=10, args=None):
+    real_model = model.module if args.ngpus > 1 else model
+    j = 0
+    assignments = -100 * torch.ones(n_data).long()
+    with torch.no_grad():
+        K = num_prototypes
+        # run distributed k-means
+
+        # init centroids with elements from memory bank of rank 0
+        centroids = torch.empty(K, feature_dim).to(args.device)
+        if args.rank == 0:
+            random_idx = torch.randperm(len(mb_embeddings[j]))[:K]
+            assert len(random_idx) >= K, "please reduce the number of centroids"
+            centroids = mb_embeddings[j][random_idx]
+        dist.broadcast(centroids, 0)
+
+        for it in range(n_iters + 1):
+
+            # E step
+            dot_products = torch.mm(mb_embeddings[j], centroids.t())
+            _, local_assignments = dot_products.max(dim=1)
+
+            # finish
+            if it == n_iters: break
+
+            # M step
+            where_helper = get_indices_sparse(local_assignments.cpu().numpy())
+            counts = torch.zeros(K).to(args.device).int()
+            emb_sums = torch.zeros(K, feature_dim).to(args.device)
+            for k in range(len(where_helper)):
+                if len(where_helper[k][0]) > 0:
+                    emb_sums[k] = torch.sum(
+                        mb_embeddings[j][where_helper[k][0]],
+                        dim=0,
+                    )
+                    counts[k] = len(where_helper[k][0])
+            dist.all_reduce(counts)
+            mask = counts > 0
+            dist.all_reduce(emb_sums)
+            centroids[mask] = emb_sums[mask] / counts[mask].unsqueeze(1)
+
+            # normalize centroids
+            centroids = nn.functional.normalize(centroids, dim=1, p=2)
+
+        if isinstance(num_prototypes, list):
+            getattr(real_model.prototypes, "prototypes"+str(j)).weight.copy_(centroids)
+        else:
+            real_model.prototypes.weight.copy_(centroids)
+
+        # gather the assignments
+        assignments_all = dist.all_gather(local_assignments)
+        assignments_all = assignments_all.cpu()
+
+        # gather the indexes
+        indexes_all = dist.all_gather(mb_index)
+        indexes_all = indexes_all.cpu()
+
+        # log assignments
+        assignments[indexes_all] = assignments_all
+
+        # next memory bank to use
+        j = (j + 1) % len(args.crops_for_assign)
+
+    return assignments
+
+
+def get_indices_sparse(data):
+    cols = np.arange(data.size)
+    M = csr_matrix((cols, (data.ravel(), cols)), shape=(int(data.max()) + 1, data.size))
+    return [np.unravel_index(row.data, data.shape) for row in M]
 
 
 if __name__ == '__main__':

@@ -1,6 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-from PIL import ImageFilter
 import random
+from PIL import Image, ImageFilter
+
+import torch
 import torchvision.transforms as transforms
 
 
@@ -82,12 +84,12 @@ def get_multicrop_transforms(
     size_crops, num_crops, min_scales=None, max_scales=None,
     mean_std=None, color_jitter_s=1.0):
 
+    if min_scales is None: min_scales = [0.08] * len(num_crops)
+    if max_scales is None: max_scales = [1.00] * len(num_crops)
+
     assert len(size_crops) == len(num_crops)
     assert len(min_scales) == len(num_crops)
     assert len(max_scales) == len(num_crops)
-
-    if min_scales is None: min_scales = [0.08] * len(num_crops)
-    if max_scales is None: max_scales = [1.00] * len(num_crops)
 
     s = color_jitter_s
     normalize = None
@@ -113,3 +115,30 @@ def get_multicrop_transforms(
             ] * num_crops[i])
     
     return trans
+
+
+class MultiCropDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        dataset,
+        transforms,
+        return_index=False,
+    ):
+        super(MultiCropDataset, self).__init__()
+        self.return_index = return_index
+        self.trans = transforms
+        self.dataset = dataset
+
+    def __getitem__(self, index):
+        img, _ = self.dataset[index]
+        if isinstance(img, str):
+            with open(img, 'rb') as f:
+                img = Image.open(f)
+                img = img.convert('RGB')
+        multi_crops = list(map(lambda trans: trans(img), self.trans))
+        if self.return_index:
+            return index, multi_crops
+        return multi_crops
+
+    def __len__(self):
+        return len(self.dataset)

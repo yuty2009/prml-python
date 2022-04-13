@@ -57,12 +57,12 @@ class kmeans(LinearModel):
     def fit(self, X, y=None, args=None):
         N = X.shape[0]
         assert N >= self.k, "number of samples should be larger than k"
-        self.centroids = X[:self.k]
-        self.index_list = [[] for i in range(self.k)]
+        self.centroids = copy.deepcopy(X[:self.k])
         self.indices = np.zeros(N, dtype=np.int)
         for it in range(self.n_iters):
             indices_old = copy.deepcopy(self.indices)
             dist = np.zeros((N, self.k), dtype=np.float)
+            self.index_list = [[] for i in range(self.k)]
             # update cluster assignments
             for i in range(N):
                 for j in range(self.k):
