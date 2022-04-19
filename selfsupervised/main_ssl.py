@@ -23,7 +23,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='swav', type=str,
+parser.add_argument('--ssl', default='simclr', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
@@ -135,22 +135,8 @@ def main(gpu, args):
     optimizer = get_optimizer(model, args)
 
     # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume, map_location='cpu')
-            args.start_epoch = checkpoint['epoch']
-            state_dict = utils.convert_state_dict(checkpoint['state_dict'])
-            model.load_state_dict(state_dict)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(args.device)
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+    if hasattr(args, 'resume') and args.resume:
+        utils.load_checkpoint(args.resume, model, optimizer, args)
     else:
         print("=> going to train from scratch")
 

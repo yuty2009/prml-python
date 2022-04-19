@@ -12,8 +12,8 @@ class MoCo(nn.Module):
     https://arxiv.org/abs/1911.05722
     """
     def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=512, dim=128,
-        queue_size=65536, m=0.999, temperature=0.07, mlp=False, symmetric=False):
+        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, num_mlplayers=1,
+        queue_size=65536, m=0.999, symmetric=False):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output (default: 2048 for resnets)
@@ -29,18 +29,26 @@ class MoCo(nn.Module):
 
         self.m = m
         self.queue_size = queue_size
-        self.temperature = temperature
         self.symmetric = symmetric
 
         self.encoder = encoder
-        if not mlp:
-            self.projector = nn.Linear(encoder_dim, dim)
-        else:
-            self.projector = nn.Sequential(
-                nn.Linear(encoder_dim, feature_dim, bias=False),
-                nn.BatchNorm1d(feature_dim),
-                nn.ReLU(inplace=True),
-                nn.Linear(feature_dim, dim))
+        if num_mlplayers == 1:
+            self.projector = nn.Linear(encoder_dim, dim) # output layer
+        elif num_mlplayers == 2:
+            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
+                                        nn.ReLU(inplace=True), # first layer
+                                        nn.Linear(feature_dim, dim, bias=False),
+                                        nn.BatchNorm1d(dim, affine=False)) # output layer
+        elif num_mlplayers == 3:
+            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
+                                        nn.ReLU(inplace=True), # first layer
+                                        nn.Linear(feature_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
+                                        nn.ReLU(inplace=True), # second layer
+                                        nn.Linear(feature_dim, dim, bias=False),
+                                        nn.BatchNorm1d(dim, affine=False)) # output layer
 
         self.model = nn.Sequential(self.encoder, self.projector)
         self.model_momentum = copy.deepcopy(self.model)
@@ -128,21 +136,17 @@ class MoCo(nn.Module):
             self._momentum_update_key_encoder()  # update the key encoder
 
         if self.symmetric:
-            p1, t1, k1 = self._forward_1(im_q, im_k)
-            p2, t2, k2 = self._forward_1(im_k, im_q)
+            q1, k1 = self._forward_1(im_q, im_k)
+            q2, k2 = self._forward_1(im_k, im_q)
             k = torch.cat([k1, k2], dim=0)
-
             # dequeue and enqueue
             self._dequeue_and_enqueue(k)
-
-            return p1, p2, t1, t2
+            return q1, q2, k1, k2, self.queue
         else:
-            p, t, k = self._forward_1(im_q, im_k)
-
+            q, k = self._forward_1(im_q, im_k)
             # dequeue and enqueue
             self._dequeue_and_enqueue(k)
-
-            return p, t
+            return q, k, self.queue
 
     def _forward_1(self, im_q, im_k):
         """
@@ -155,35 +159,36 @@ class MoCo(nn.Module):
         # compute query features
         q = self.model(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
-
         # compute key features
         with torch.no_grad():  # no gradient to keys
             # shuffle for making use of BN
             # im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
-
             k = self.model_momentum(im_k)  # keys: NxC
             k = nn.functional.normalize(k, dim=1)
-
             # undo shuffle
             # k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+        return q, k
 
+
+class NTXentLossWithQueue(nn.Module):
+    def __init__(self, temperature=0.5):
+        super(NTXentLossWithQueue, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, q, k, queue):
         # compute logits
-        # Einstein sum is more intuitive
         # positive logits: Nx1
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
         # negative logits: NxK
-        l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
-
+        l_neg = torch.einsum('nc,ck->nk', [q, queue.clone().detach()])
         # logits: Nx(1+K)
         logits = torch.cat([l_pos, l_neg], dim=1)
-
         # apply temperature
         logits /= self.temperature
-
         # labels: positive key indicators
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
-
-        return logits, labels, k
+        loss = nn.functional.cross_entropy(logits, labels)
+        return loss
 
 
 # utils

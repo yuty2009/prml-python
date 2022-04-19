@@ -8,8 +8,8 @@ class BYOL(nn.Module):
     """
     Build a BYOL model. This model is adapted from SimSiam
     """
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512,
-        m=0.999, num_mlp_layers=2):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512, num_mlplayers=2,
+        m=0.999):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
@@ -24,13 +24,13 @@ class BYOL(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        if num_mlp_layers == 2:
+        if num_mlplayers == 2:
             self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # first layer
                                         nn.Linear(feature_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim, affine=False)) # output layer
-        elif num_mlp_layers == 3:
+        elif num_mlplayers == 3:
             self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # first layer

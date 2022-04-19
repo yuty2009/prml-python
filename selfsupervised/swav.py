@@ -6,31 +6,23 @@ import torch.nn as nn
 
 class SwAV(nn.Module):
     def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, queue_size=0, num_prototypes=3000,
-        temperature=0.1, num_crops=[2], crops_for_assign=[0, 1], sinkhorn_iters=3, epsilon=0.05):
+        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, 
+        queue_size=0, num_prototypes=3000, num_crops=[2], crops_for_assign=[0, 1]):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output (default: 2048 for resnets)
         feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
         queue_size: queue size
-        temperature: softmax temperature (default: 0.1)
+        num_prototypes: number of cluster centroids (default: 3000)
         num_crops: list of number of crops (example: [2, 6])
         crops_for_assign: list of crops id used for computing assignments (default: [0, 1])
-        num_prototypes: number of cluster centroids (default: 3000)
-        sinkhorn_iters: number of iterations in Sinkhorn-Knopp algorithm
-        epsilon: regularization parameter for Sinkhorn-Knopp algorithm
         """
         super(SwAV, self).__init__()
 
         self.queue_size = queue_size
-        self.temperature = temperature
         self.num_crops = num_crops
         self.crops_for_assign = crops_for_assign
-        self.sinkhorn_iters = sinkhorn_iters
-        self.epsilon = epsilon
-        self.use_the_queue = False
-        self.softmax = nn.Softmax(dim=1)
 
         self.encoder = encoder
         self.projector = nn.Sequential (
@@ -59,6 +51,7 @@ class SwAV(nn.Module):
             torch.tensor([inp.shape[-1] for inp in inputs]),
             return_counts=True,
         )[1], 0)
+        bs = inputs[0].size(0)
         start_idx = 0
         for end_idx in idx_crops:
             _out = self.encoder(torch.cat(inputs[start_idx: end_idx]))
@@ -68,42 +61,70 @@ class SwAV(nn.Module):
                 output = torch.cat((output, _out))
             start_idx = end_idx
         # projection
-        z = self.projector(output)
+        embedding = self.projector(output)
         # normalize feature embeddings
-        z = nn.functional.normalize(z, dim=1)
+        embedding = nn.functional.normalize(embedding, dim=1)
+        # normalize the prototypes
+        with torch.no_grad():
+            w = self.prototypes.weight.data.clone()
+            w = nn.functional.normalize(w, dim=1, p=2)
+            self.prototypes.weight.copy_(w)
         # compute Z^T C
-        output = self.prototypes(z)
-        return z, output
+        output = self.prototypes(embedding)
+        # use queue if necessary
+        if self.queue_size > 0:
+            embedding = embedding.detach()
+            output, bs = self.update_queue(embedding, output, bs)
+        return embedding, output, bs
 
-    def compute_loss(self, embedding, output, batch_size):
-        loss = 0
-        bs = batch_size
+    def update_queue(self, embedding, output, bs):
+        bs_new = bs
+        output_new = []
         for i, crop_id in enumerate(self.crops_for_assign):
             with torch.no_grad():
                 out = output[bs * crop_id: bs * (crop_id + 1)].detach()
-                if self.queue_size > 0:
-                    # time to use the queue
-                    if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
-                        self.use_the_queue = True
-                        out = torch.cat((torch.mm(
-                            self.queue[i],
-                            self.prototypes.weight.t()
-                        ), out))
-                    # fill the queue
-                    self.queue[i, bs:] = self.queue[i, :-bs].clone()
-                    self.queue[i, :bs] = embedding[crop_id * bs: (crop_id + 1) * bs]
+                # time to use the queue
+                if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
+                    self.use_the_queue = True
+                    out = torch.cat((torch.mm(
+                        self.queue[i],
+                        self.prototypes.weight.t()
+                    ), out))
+                    bs_new = out.size(0)
+                # fill the queue
+                self.queue[i, bs:] = self.queue[i, :-bs].clone()
+                self.queue[i, :bs] = embedding[crop_id * bs: (crop_id + 1) * bs]
+                output_new.append(out)
+        return output, bs_new
+
+
+class SwAVLoss(nn.Module):
+    def __init__(self, temperature=0.1, sinkhorn_iters=3, epsilon=0.05):
+        """
+        temperature: softmax temperature (default: 0.1)
+        sinkhorn_iters: number of iterations in Sinkhorn-Knopp algorithm
+        epsilon: regularization parameter for Sinkhorn-Knopp algorithm
+        """
+        super(SwAVLoss, self).__init__()
+        self.temperature = temperature
+        self.sinkhorn_iters = sinkhorn_iters
+        self.epsilon = epsilon
+
+    def forward(self, output, bs, args):
+        loss = 0
+        for i, crop_id in enumerate(args.crops_for_assign):
+            with torch.no_grad():
+                out = output[bs * crop_id: bs * (crop_id + 1)].detach()
                 # get assignments
                 q = torch.exp(out / self.epsilon).t()
                 q = distributed_sinkhorn(q, self.sinkhorn_iters)[-bs:]
-
             # cluster assignment prediction
             subloss = 0
-            for v in np.delete(np.arange(np.sum(self.num_crops)), crop_id):
-                p = self.softmax(output[bs * v: bs * (v + 1)] / self.temperature)
+            for v in np.delete(np.arange(np.sum(args.num_crops)), crop_id):
+                p = nn.functional.softmax(output[bs * v: bs * (v + 1)] / self.temperature, dim=1)
                 subloss -= torch.mean(torch.sum(q * torch.log(p), dim=1))
-            loss += subloss / (np.sum(self.num_crops) - 1)
-        loss /= len(self.crops_for_assign)
-
+            loss += subloss / (np.sum(args.num_crops) - 1)
+        loss /= len(args.crops_for_assign)
         return loss
 
 

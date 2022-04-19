@@ -9,7 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, byol, simsiam, swav, deepcluster
+import moco, simclr, barlowtwins, byol, simsiam, swav, deepcluster
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -76,28 +76,6 @@ class KNNClassifier(nn.Module):
         return pred_labels
 
 
-class NT_Xent(nn.Module):
-    def __init__(self, temperature=0.5):
-        super(NT_Xent, self).__init__()
-        self.temperature = temperature
-
-    def forward(self, z_i, z_j):
-        N = z_i.shape[0]
-        # [2*B, D]
-        out = torch.cat([z_i, z_j], dim=0)
-        # [2*B, 2*B]
-        sim_matrix = torch.exp(torch.mm(out, out.t().contiguous()) / self.temperature)
-        mask = (torch.ones_like(sim_matrix) - torch.eye(2 * N, device=sim_matrix.device)).bool()
-        # [2*B, 2*B-1]
-        sim_matrix = sim_matrix.masked_select(mask).view(2 * N, -1)
-        # compute loss
-        pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / self.temperature)
-        # [2*B]
-        pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
-        loss = (- torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
-        return loss
-
-
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
     
@@ -114,26 +92,22 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         for i in range(len(images)):
             images[i] = images[i].to(args.device)
 
-        if str.lower(args.ssl) in ['moco', 'moco_v1', 'moco_v2']: # 'moco'
+        if str.lower(args.ssl) in ['moco', 'moco_v1', 'moco_v2']:
             if hasattr(args, 'symmetric') and args.symmetric:
-                p1, p2, t1, t2 = model(images[0], images[1])
-                loss = 0.5 * (criterion(p1, t1) + criterion(p2, t2))
+                q1, q2, k1, k2, queue = model(images[0], images[1])
+                loss = 0.5 * (criterion(q1, k1, queue) + criterion(q2, k2, queue))
             else:
-                p1, t1 = model(images[0], images[1])
-                loss = criterion(p1, t1)
+                q1, k1 = model(images[0], images[1])
+                loss = criterion(q1, k1, queue)
+        elif str.lower(args.ssl) in ['simclr', 'barlowtwins']:
+            z1, z2 = model(images[0], images[1])
+            loss = criterion(z1, z2)
         elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
             p1, p2, t1, t2 = model(images[0], images[1])
             loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
         elif str.lower(args.ssl) in ['swav']:
-            real_model = model.module if args.ngpus > 1 else model
-            # normalize the prototypes
-            with torch.no_grad():
-                w = real_model.prototypes.weight.data.clone()
-                w = nn.functional.normalize(w, dim=1, p=2)
-                real_model.prototypes.weight.copy_(w)
-            embedding, output = model(images)
-            embedding = embedding.detach()
-            loss = real_model.compute_loss(embedding, output, images[0].size(0))
+            embedding, output, bs = model(images)
+            loss = criterion(output, bs, args)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -274,72 +248,86 @@ def get_ssl_model_and_criterion(base_encoder, args):
         # args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 1
         args.moco_k = 4096 # 4096 for cifar10
         args.moco_m = 0.99 # 0.99 for cifar10
         args.temperature = 0.1 # 0.1 for cifar10
-        args.mlp = False
         args.symmetric = True
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.moco_k, args.moco_m, args.temperature, args.mlp,
-            args.symmetric)
-        criterion = nn.CrossEntropyLoss()
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
+            args.moco_k, args.moco_m, args.symmetric)
+        criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
         # args.lr = 6e-2 # 6e-2 for cifar10
         # args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 2
         args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
         args.moco_m = 0.99 # 0.99 for cifar10
         args.temperature = 0.1 # 0.1 for cifar10
-        args.mlp = True
         args.schedule = 'cos'
         args.symmetric = True
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.moco_k, args.moco_m, args.temperature, args.mlp,
-            args.symmetric)
-        criterion = nn.CrossEntropyLoss()
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
+            args.moco_k, args.moco_m, args.symmetric)
+        criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
         # args.lr = 1e-3 # 1e-3 for cifar10
         # args.weight_decay = 1e-6 # 1e-6 for cifar10
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 2
         args.temperature = 0.5
         model = simclr.SimCLR(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, 
-            args.temperature)
-        criterion = nn.CrossEntropyLoss()
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
+        criterion = simclr.NTXentLoss(args.temperature)
+
+    elif str.lower(args.ssl) in ['barlowtwins']:
+        # args.lr = 1e-3 # 1e-3 for cifar10
+        # args.weight_decay = 1e-6 # 1e-6 for cifar10
+        args.feature_dim = 512
+        args.dim = 128
+        args.num_mlplayers = 2
+        args.lambda_param = 0.5
+        model = barlowtwins.BarlowTwins(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
+        criterion = barlowtwins.BarlowTwinsLoss(args.lambda_param)
 
     elif str.lower(args.ssl) in ['byol']:
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 2
         args.byol_m = 0.9
         model = byol.BYOL(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
             args.byol_m)
         criterion = nn.CosineSimilarity(dim=1)
     
     elif str.lower(args.ssl) in ['simsiam']:
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 2
         model = simsiam.SimSiam(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim)
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
         criterion = nn.CosineSimilarity(dim=1)
 
     elif str.lower(args.ssl) in ['swav']:
         args.feature_dim = 512
         args.dim = 128
+        args.num_mlplayers = 2
         args.swav_k = 0
         args.num_prototypes = 3000
+        args.num_crops = [2]
+        args.crops_for_assign = [0, 1]
         args.temperature = 0.1
         args.freeze_prototypes_niters = 313
         model = swav.SwAV(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.swav_k, args.num_prototypes, args.temperature)
-        criterion = nn.CrossEntropyLoss()
+            args.swav_k, args.num_prototypes)
+        criterion = swav.SwAVLoss(args.temperature)
     
     elif str.lower(args.ssl) in ['deepcluster', 'deepcluster2']:
         args.feature_dim = 512
