@@ -1,5 +1,4 @@
 # Refer to https://github.com/facebookresearch/swav/
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -51,9 +50,14 @@ class DeepCluster(nn.Module):
         z = self.projector(out)
         # normalize feature embeddings
         z = nn.functional.normalize(z, dim=1)
+        # normalize the prototypes
+        with torch.no_grad():
+            w = self.prototypes.weight.data.clone()
+            w = nn.functional.normalize(w, dim=1, p=2)
+            self.prototypes.weight.copy_(w)
         # compute Z^T C
         output = self.prototypes(z)
-        return z, output
+        return output, z
 
 
 class MultiPrototypes(nn.Module):

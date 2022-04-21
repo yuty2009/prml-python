@@ -13,21 +13,21 @@ class MoCo(nn.Module):
     """
     def __init__(
         self, encoder, encoder_dim=2048, feature_dim=512, dim=128, num_mlplayers=1,
-        queue_size=65536, m=0.999, symmetric=False):
+        queue_size=65536, momentum=0.999, symmetric=False):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output (default: 2048 for resnets)
         feature_dim: intermediate dimension of the projector (default: 512)
         dim: projection dimension (default: 128)
         queue_size: queue size; number of negative keys (default: 65536)
-        m: moco momentum of updating key encoder (default: 0.999)
+        momentum: moco momentum of updating key encoder (default: 0.999)
         temperature: softmax temperature (default: 0.07)
         mlp: with a multi-layer projector (default: False)
         symmetric: use symmetric loss or not (default: False)
         """
         super(MoCo, self).__init__()
 
-        self.m = m
+        self.momentum = momentum
         self.queue_size = queue_size
         self.symmetric = symmetric
 
@@ -66,7 +66,7 @@ class MoCo(nn.Module):
         Momentum update of the key encoder
         """
         for param_q, param_k in zip(self.model.parameters(), self.model_momentum.parameters()):
-            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+            param_k.data = param_k.data * self.momentum + param_q.data * (1. - self.momentum)
 
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):

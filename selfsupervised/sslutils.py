@@ -1,6 +1,7 @@
 
 import os
 import tqdm
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.datasets as datasets
@@ -9,7 +10,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, barlowtwins, byol, simsiam, swav, deepcluster
+import moco, simclr, barlowtwins, byol, simsiam, swav, deepcluster, dino
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -76,6 +77,45 @@ class KNNClassifier(nn.Module):
         return pred_labels
 
 
+class MultiCropWrapper(nn.Module):
+    """
+    Copy-paste from: https://github.com/facebookresearch/dino/utils.py
+    Perform forward pass separately on each resolution input.
+    The inputs corresponding to a single resolution are clubbed and single
+    forward is run on the same resolution inputs. Hence we do several
+    forward passes = number of different resolutions used. We then
+    concatenate all the output features and run the head forward on these
+    concatenated features.
+    """
+    def __init__(self, backbone, head):
+        super(MultiCropWrapper, self).__init__()
+        # disable layers dedicated to ImageNet labels classification
+        backbone.fc, backbone.head = nn.Identity(), nn.Identity()
+        self.backbone = backbone
+        self.head = head
+
+    def forward(self, x):
+        # convert to list
+        if not isinstance(x, list):
+            x = [x]
+        idx_crops = torch.cumsum(torch.unique_consecutive(
+            torch.tensor([inp.shape[-1] for inp in x]),
+            return_counts=True,
+        )[1], 0)
+        start_idx, output = 0, torch.empty(0).to(x[0].device)
+        for end_idx in idx_crops:
+            _out = self.backbone(torch.cat(x[start_idx: end_idx]))
+            # The output is a tuple with XCiT model. See:
+            # https://github.com/facebookresearch/xcit/blob/master/xcit.py#L404-L405
+            if isinstance(_out, tuple):
+                _out = _out[0]
+            # accumulate outputs
+            output = torch.cat((output, _out))
+            start_idx = end_idx
+        # Run the head forward on the concatenated features.
+        return self.head(output)
+
+
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
     
@@ -106,8 +146,11 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
             p1, p2, t1, t2 = model(images[0], images[1])
             loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
         elif str.lower(args.ssl) in ['swav']:
-            embedding, output, bs = model(images)
-            loss = criterion(output, bs, args)
+            output, embedding = model(images)
+            loss = criterion(output, embedding)
+        elif str.lower(args.ssl) in ['dino']:
+            output_s, output_t = model(images)
+            loss = criterion(output_s, output_t)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -318,16 +361,14 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.feature_dim = 512
         args.dim = 128
         args.num_mlplayers = 2
-        args.swav_k = 0
         args.num_prototypes = 3000
         args.num_crops = [2]
-        args.crops_for_assign = [0, 1]
         args.temperature = 0.1
         args.freeze_prototypes_niters = 313
         model = swav.SwAV(
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.swav_k, args.num_prototypes)
-        criterion = swav.SwAVLoss(args.temperature)
+            args.num_prototypes, ncrops=np.sum(args.num_crops))
+        criterion = swav.SwAVLoss(np.sum(args.num_crops), args.temperature)
     
     elif str.lower(args.ssl) in ['deepcluster', 'deepcluster2']:
         args.feature_dim = 512
@@ -339,6 +380,20 @@ def get_ssl_model_and_criterion(base_encoder, args):
             base_encoder, args.encoder_dim, args.feature_dim, args.dim,
             args.num_prototypes)
         criterion = nn.CrossEntropyLoss(ignore_index=-100)
+
+    elif str.lower(args.ssl) in ['dino']:
+        args.feature_dim = 512
+        args.dim = 128
+        args.num_mlplayers = 2
+        args.dino_m = 0.996
+        args.num_crops = [2]
+        args.temperature_s = 0.1
+        args.temperature_t = 0.04
+        model = dino.DINO(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
+            args.dino_m)
+        criterion = dino.DINOLoss(
+            args.dim, np.sum(args.num_crops), args.temperature_s, args.temperature_t)
     
     else:
         raise NotImplementedError

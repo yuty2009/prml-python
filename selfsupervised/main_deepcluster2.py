@@ -270,7 +270,7 @@ def train_epoch(data_loader, model, criterion, optimizer, epoch, args,
         for i in range(len(inputs)):
             inputs[i] = inputs[i].to(args.device)
 
-        embeddings, outputs = model(inputs)
+        outputs, embeddings = model(inputs)
 
         outputs /= args.temperature
         targets = assignments[index].repeat(len(inputs)).to(args.device)
@@ -325,7 +325,7 @@ def init_memory(data_loader, model, args):
             index = index.to(args.device)
             for i in range(len(inputs)):
                 inputs[i] = inputs[i].to(args.device)
-            embeddings, outputs = model(inputs)
+            outputs, embeddings = model(inputs)
             # fill the memory bank
             mb_index[start_idx : start_idx + bs] = index
             for i, crop_idx in enumerate(args.crops_for_assign):

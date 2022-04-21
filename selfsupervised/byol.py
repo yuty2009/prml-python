@@ -9,17 +9,17 @@ class BYOL(nn.Module):
     Build a BYOL model. This model is adapted from SimSiam
     """
     def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512, num_mlplayers=2,
-        m=0.999):
+        momentum=0.999):
         """
         encoder: encoder you want to use to get feature representations (eg. resnet50)
         encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
         feature_dim: dimension of the projector output (default: 2048)
         dim: hidden dimension of the predictor (default: 512)
-        m: momentum of updating key encoder (default: 0.999)
+        momentum: momentum of updating key encoder (default: 0.999)
         """
         super(BYOL, self).__init__()
 
-        self.m = m
+        self.momentum = momentum
 
         # create the online encoder
         self.encoder = encoder
@@ -56,7 +56,7 @@ class BYOL(nn.Module):
         """
         for param_q, param_k in zip(self.model.parameters(),
                                     self.model_momentum.parameters()):
-            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+            param_k.data = param_k.data * self.momentum + param_q.data * (1. - self.momentum)
 
     def forward(self, x1, x2):
         """
