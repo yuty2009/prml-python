@@ -11,14 +11,17 @@ import torch.distributed as dist
 
 class DINO(nn.Module):
     def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=2048, dim=512, num_mlplayers=2,
+        self, encoder, encoder_dim=2048, feature_dim=256, out_dim=512, 
+        n_mlplayers=2, hidden_dim=2048, use_bn=False,
         momentum=0.999, norm_last_layer=True):
         """
         - encoder: encoder you want to use to get feature representations (eg. resnet50)
         - encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
-        - feature_dim: dimension of the projector output (default: 2048)
-        - dim: hidden dimension of the predictor (default: 512)
-        - num_mlplayers: number of MLP layers for the projector (default: 2)
+        - feature_dim: dimension of the projector output (default: 256)
+        - out_dim: output dimension of the predictor (default: 512)
+        - n_mlplayers: number of MLP layers for the projector (default: 2)
+        - hidden_dim: hidden dimension if a multi-layer projector was used
+        - use_bn: whether use batch normalization (default: False)
         - momentum: momentum of updating key encoder (default: 0.999)
         - norm_last_layer: whether or not to weight normalize the last layer of the DINO head.
         Not normalizing leads to better performance but can make the training unstable.
@@ -32,39 +35,57 @@ class DINO(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        if num_mlplayers == 2:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim, affine=False)) # output layer
-        elif num_mlplayers == 3:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # second layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim, affine=False)) # output layer
-        # create student and teacher
-        self.student = nn.Sequential(self.encoder, self.projector)
-        self.teacher = copy.deepcopy(self.student)
-        # disable backpropagation through the teacher
-        for p in self.teacher.parameters():
-            p.requires_grad = False
+        n_mlplayers = max(n_mlplayers, 1)
+        activation = nn.ReLU(inplace=True)
+        if n_mlplayers == 1:
+            self.projector = nn.Linear(encoder_dim, feature_dim)
+        else:
+            if not use_bn:
+                layers = [nn.Linear(encoder_dim, hidden_dim)]
+            else:
+                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
+                layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(activation)
+            for _ in range(n_mlplayers - 2):
+                if not use_bn:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim))
+                else:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
+                    layers.append(nn.BatchNorm1d(hidden_dim))
+                layers.append(activation)
+            # output layer
+            if not use_bn:
+                layers.append(nn.Linear(hidden_dim, feature_dim))
+            else:
+                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
+                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
+            self.projector = nn.Sequential(*layers)
         # create the student predictor
-        self.predictor_s = nn.utils.weight_norm(nn.Linear(feature_dim, dim, bias=False))
+        self.predictor_s = nn.utils.weight_norm(nn.Linear(feature_dim, out_dim, bias=False))
         self.predictor_s.weight_g.data.fill_(1)
         if norm_last_layer:
             self.predictor_s.weight_g.requires_grad = False
         # create the teacher predictor
-        self.predictor_t = nn.utils.weight_norm(nn.Linear(feature_dim, dim, bias=False))
+        self.predictor_t = nn.utils.weight_norm(nn.Linear(feature_dim, out_dim, bias=False))
         self.predictor_t.weight_g.data.fill_(1)
         # self.predictor_t.weight_g.requires_grad = False
         for p in self.predictor_t.parameters():
             p.requires_grad = False
         
+        # create student and teacher
+        self.student = nn.Sequential(self.encoder, self.projector, self.predictor_s)
+        self.teacher = nn.Sequential(
+            copy.deepcopy(self.encoder),
+            copy.deepcopy(self.projector),
+            self.predictor_t)
+        # self.head_s = DINOHead(encoder_dim, out_dim, hidden_dim=feature_dim)
+        # self.head_t = DINOHead(encoder_dim, out_dim, hidden_dim=feature_dim)
+        # self.student = nn.Sequential(encoder, self.head_s)
+        # self.teacher = nn.Sequential(copy.deepcopy(encoder), self.head_t)
+        # disable backpropagation through the teacher
+        for p in self.teacher.parameters():
+            p.requires_grad = False
+
     @torch.no_grad()
     def _momentum_update_teacher(self):
         for param_s, param_t in zip(self.student.parameters(),
@@ -95,9 +116,6 @@ class DINO(nn.Module):
         # normalize the outputs
         output_s = nn.functional.normalize(output_s, dim=1)
         output_t = nn.functional.normalize(output_t, dim=1)
-        # last_layer (predictor)
-        output_s = self.predictor_s(output_s)
-        output_t = self.predictor_s(output_t)
         return output_s, output_t
 
 
@@ -143,7 +161,6 @@ class DINOLoss(nn.Module):
         batch_center = torch.sum(output_t, dim=0, keepdim=True)
         dist.all_reduce(batch_center)
         batch_center = batch_center / (len(output_t) * dist.get_world_size())
-
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 

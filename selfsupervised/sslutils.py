@@ -289,111 +289,126 @@ def get_ssl_model_and_criterion(base_encoder, args):
     if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
         # args.lr = 6e-2 # 6e-2 for cifar10
         # args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 1
+        args.feature_dim = 128
+        args.n_mlplayers = 1
+        args.hidden_dim = 512
         args.moco_k = 4096 # 4096 for cifar10
         args.moco_m = 0.99 # 0.99 for cifar10
         args.temperature = 0.1 # 0.1 for cifar10
         args.symmetric = True
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
-            args.moco_k, args.moco_m, args.symmetric)
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True,
+            queue_size=args.moco_k, momentum=args.moco_m, symetric=args.symmetric)
         criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
         # args.lr = 6e-2 # 6e-2 for cifar10
         # args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
         args.moco_m = 0.99 # 0.99 for cifar10
         args.temperature = 0.1 # 0.1 for cifar10
         args.schedule = 'cos'
         args.symmetric = True
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
-            args.moco_k, args.moco_m, args.symmetric)
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True,
+            queue_size=args.moco_k, momentum=args.moco_m, symmetric=args.symmetric)
         criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
         # args.lr = 1e-3 # 1e-3 for cifar10
         # args.weight_decay = 1e-6 # 1e-6 for cifar10
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         args.temperature = 0.5
         model = simclr.SimCLR(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True)
         criterion = simclr.NTXentLoss(args.temperature)
 
     elif str.lower(args.ssl) in ['barlowtwins']:
         # args.lr = 1e-3 # 1e-3 for cifar10
         # args.weight_decay = 1e-6 # 1e-6 for cifar10
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         args.lambda_param = 0.5
         model = barlowtwins.BarlowTwins(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True)
         criterion = barlowtwins.BarlowTwinsLoss(args.lambda_param)
 
     elif str.lower(args.ssl) in ['byol']:
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.out_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         args.byol_m = 0.9
         model = byol.BYOL(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
-            args.byol_m)
+            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True,
+            momentum=args.byol_m)
         criterion = nn.CosineSimilarity(dim=1)
     
     elif str.lower(args.ssl) in ['simsiam']:
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.out_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         model = simsiam.SimSiam(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers)
+            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True)
         criterion = nn.CosineSimilarity(dim=1)
 
     elif str.lower(args.ssl) in ['swav']:
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
-        args.num_prototypes = 3000
+        args.feature_dim = 128
+        args.out_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
+        args.n_prototypes = 3000
         args.num_crops = [2]
         args.temperature = 0.1
         args.freeze_prototypes_niters = 313
         model = swav.SwAV(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.num_prototypes, ncrops=np.sum(args.num_crops))
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=True,
+            n_prototypes=args.n_prototypes, ncrops=np.sum(args.num_crops))
         criterion = swav.SwAVLoss(np.sum(args.num_crops), args.temperature)
     
     elif str.lower(args.ssl) in ['deepcluster', 'deepcluster2']:
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_prototypes = 3000
+        args.feature_dim = 128
+        args.out_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
+        args.n_prototypes = 3000
         args.temperature = 0.1
         args.freeze_prototypes_niters = 313
         model = deepcluster.DeepCluster(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.num_prototypes)
+            base_encoder, args.encoder_dim, args.feature_dim,
+            args.n_mlplayers, args.hidden_dim, use_bn=False,
+            n_prototypes=args.n_prototypes)
         criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     elif str.lower(args.ssl) in ['dino']:
-        args.feature_dim = 512
-        args.dim = 128
-        args.num_mlplayers = 2
+        args.feature_dim = 128
+        args.out_dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 512
         args.dino_m = 0.996
         args.num_crops = [2]
         args.temperature_s = 0.1
         args.temperature_t = 0.04
         model = dino.DINO(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, args.num_mlplayers,
-            args.dino_m)
+            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim, 
+            args.n_mlplayers, args.hidden_dim, use_bn=True,
+            momentum=args.dino_m)
         criterion = dino.DINOLoss(
-            args.dim, np.sum(args.num_crops), args.temperature_s, args.temperature_t)
+            args.out_dim, np.sum(args.num_crops), args.temperature_s, args.temperature_t)
     
     else:
         raise NotImplementedError

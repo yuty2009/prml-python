@@ -29,39 +29,53 @@ class SimSiam(nn.Module):
         z = normalize(z, dim=1) # l2-normalize
         return -(p*z).sum(dim=1).mean()
     """
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, dim=512, num_mlplayers=2):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, out_dim=512,
+        n_mlplayers=2, hidden_dim=2048, use_bn=False):
         """
-        encoder: encoder you want to use to get feature representations (eg. resnet50)
-        encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
-        feature_dim: dimension of the projector output (default: 2048)
-        dim: hidden dimension of the predictor (default: 512)
+        - encoder: encoder you want to use to get feature representations (eg. resnet50)
+        - encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
+        - feature_dim: dimension of the projector output (default: 512)
+        - out_dim: hidden dimension of the predictor (default: 512)
+        - n_mlplayers: number of MLP layers for the projector (default: 2)
+        - hidden_dim: hidden dimension if a multi-layer projector was used (default: 2048)
+        - use_bn: whether use batch normalization (default: False)
         """
         super(SimSiam, self).__init__()
 
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        if num_mlplayers == 2:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim, affine=False)) # output layer
-        elif num_mlplayers == 3:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # second layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim, affine=False)) # output layer
+        n_mlplayers = max(n_mlplayers, 1)
+        activation = nn.ReLU(inplace=True)
+        if n_mlplayers == 1:
+            self.projector = nn.Linear(encoder_dim, feature_dim)
+        else:
+            if not use_bn:
+                layers = [nn.Linear(encoder_dim, hidden_dim)]
+            else:
+                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
+                layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(activation)
+            for _ in range(n_mlplayers - 2):
+                if not use_bn:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim))
+                else:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
+                    layers.append(nn.BatchNorm1d(hidden_dim))
+                layers.append(activation)
+            # output layer
+            if not use_bn:
+                layers.append(nn.Linear(hidden_dim, feature_dim))
+            else:
+                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
+                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
+            self.projector = nn.Sequential(*layers)
         self.model = nn.Sequential(self.encoder, self.projector)
         # build a 2-layer predictor
-        self.predictor = nn.Sequential(nn.Linear(feature_dim, dim, bias=False),
-                                        nn.BatchNorm1d(dim),
+        self.predictor = nn.Sequential(nn.Linear(feature_dim, feature_dim, bias=False),
+                                        nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # hidden layer
-                                        nn.Linear(dim, feature_dim)) # output layer
+                                        nn.Linear(feature_dim, out_dim)) # output layer
 
     def forward(self, x1, x2):
         """

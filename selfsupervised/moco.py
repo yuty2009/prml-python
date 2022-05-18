@@ -11,19 +11,19 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, num_mlplayers=1,
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=512,
+        n_mlplayers=2, hidden_dim=2048, use_bn=False,
         queue_size=65536, momentum=0.999, symmetric=False):
         """
-        encoder: encoder you want to use to get feature representations (eg. resnet50)
-        encoder_dim: dimension of the encoder output (default: 2048 for resnets)
-        feature_dim: intermediate dimension of the projector (default: 512)
-        dim: projection dimension (default: 128)
-        queue_size: queue size; number of negative keys (default: 65536)
-        momentum: moco momentum of updating key encoder (default: 0.999)
-        temperature: softmax temperature (default: 0.07)
-        mlp: with a multi-layer projector (default: False)
-        symmetric: use symmetric loss or not (default: False)
+        - encoder: encoder you want to use to get feature representations (eg. resnet50)
+        - encoder_dim: dimension of the encoder output (default: 2048 for resnets)
+        - feature_dim: dimension of the projector output (default: 512)
+        - n_mlplayers: number of MLP layers for the projector (default: 2)
+        - hidden_dim: hidden dimension if a multi-layer projector was used (default: 2048)
+        - use_bn: whether use batch normalization (default: False)
+        - queue_size: queue size; number of negative keys (default: 65536)
+        - momentum: moco momentum of updating key encoder (default: 0.999)
+        - symmetric: use symmetric loss or not (default: False)
         """
         super(MoCo, self).__init__()
 
@@ -31,24 +31,34 @@ class MoCo(nn.Module):
         self.queue_size = queue_size
         self.symmetric = symmetric
 
+        # create the online encoder
         self.encoder = encoder
-        if num_mlplayers == 1:
-            self.projector = nn.Linear(encoder_dim, dim) # output layer
-        elif num_mlplayers == 2:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, dim, bias=False),
-                                        nn.BatchNorm1d(dim, affine=False)) # output layer
-        elif num_mlplayers == 3:
-            self.projector = nn.Sequential(nn.Linear(encoder_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(feature_dim, feature_dim, bias=False),
-                                        nn.BatchNorm1d(feature_dim),
-                                        nn.ReLU(inplace=True), # second layer
-                                        nn.Linear(feature_dim, dim, bias=False),
-                                        nn.BatchNorm1d(dim, affine=False)) # output layer
+        # create the online projector
+        n_mlplayers = max(n_mlplayers, 1)
+        activation = nn.ReLU(inplace=True)
+        if n_mlplayers == 1:
+            self.projector = nn.Linear(encoder_dim, feature_dim)
+        else:
+            if not use_bn:
+                layers = [nn.Linear(encoder_dim, hidden_dim)]
+            else:
+                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
+                layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(activation)
+            for _ in range(n_mlplayers - 2):
+                if not use_bn:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim))
+                else:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
+                    layers.append(nn.BatchNorm1d(hidden_dim))
+                layers.append(activation)
+            # output layer
+            if not use_bn:
+                layers.append(nn.Linear(hidden_dim, feature_dim))
+            else:
+                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
+                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
+            self.projector = nn.Sequential(*layers)
 
         self.model = nn.Sequential(self.encoder, self.projector)
         self.model_momentum = copy.deepcopy(self.model)
@@ -56,7 +66,7 @@ class MoCo(nn.Module):
             p.requires_grad = False
 
         # create the queue
-        self.register_buffer("queue", torch.randn(dim, queue_size))
+        self.register_buffer("queue", torch.randn(feature_dim, queue_size))
         self.queue = nn.functional.normalize(self.queue, dim=0)
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 

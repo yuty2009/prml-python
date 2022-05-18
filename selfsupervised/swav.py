@@ -5,41 +5,64 @@ import torch.nn as nn
 
 
 class SwAV(nn.Module):
-    def __init__(
-        self, encoder, encoder_dim=2048, feature_dim=512, dim=128, 
-        num_prototypes=3000, ncrops=2, queue_size=0):
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=512,
+        n_mlplayers=2, hidden_dim=2048, use_bn=False,
+        n_prototypes=3000, ncrops=2, queue_size=0):
         """
-        encoder: encoder you want to use to get feature representations (eg. resnet50)
-        encoder_dim: dimension of the encoder output (default: 2048 for resnets)
-        feature_dim: intermediate dimension of the projector (default: 512)
-        dim: projection dimension (default: 128)
-        num_prototypes: number of cluster centroids (default: 3000)
-        ncrops: number of crops (example: 8)
-        queue_size: queue size (optional)
+        - encoder: encoder you want to use to get feature representations (eg. resnet50)
+        - encoder_dim: dimension of the encoder output (default: 2048 for resnets)
+        - feature_dim: dimension of the projector output (default: 512)
+        - n_mlplayers: number of MLP layers for the projector (default: 2)
+        - hidden_dim: hidden dimension if a multi-layer projector was used (default: 2048)
+        - use_bn: whether use batch normalization (default: False)
+        - n_prototypes: number of cluster centroids (default: 3000)
+        - ncrops: number of crops (example: 8)
+        - queue_size: queue size (optional)
         """
         super(SwAV, self).__init__()
 
         self.ncrops = ncrops
         self.queue_size = queue_size
 
+        # create the online encoder
         self.encoder = encoder
-        self.projector = nn.Sequential (
-            nn.Linear(encoder_dim, feature_dim, bias=False),
-            nn.BatchNorm1d(feature_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(feature_dim, dim),
-        )
+        # create the online projector
+        n_mlplayers = max(n_mlplayers, 1)
+        activation = nn.ReLU(inplace=True)
+        if n_mlplayers == 1:
+            self.projector = nn.Linear(encoder_dim, feature_dim)
+        else:
+            if not use_bn:
+                layers = [nn.Linear(encoder_dim, hidden_dim)]
+            else:
+                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
+                layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(activation)
+            for _ in range(n_mlplayers - 2):
+                if not use_bn:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim))
+                else:
+                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
+                    layers.append(nn.BatchNorm1d(hidden_dim))
+                layers.append(activation)
+            # output layer
+            if not use_bn:
+                layers.append(nn.Linear(hidden_dim, feature_dim))
+            else:
+                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
+                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
+            self.projector = nn.Sequential(*layers)
         # prototype layer
         self.prototypes = None
-        if isinstance(num_prototypes, list):
-            self.prototypes = MultiPrototypes(dim, num_prototypes)
-        elif num_prototypes > 0:
-            self.prototypes = nn.Linear(dim, num_prototypes, bias=False)
+        if isinstance(n_prototypes, list):
+            self.prototypes = MultiPrototypes(feature_dim, n_prototypes)
+        elif n_prototypes > 0:
+            self.prototypes = nn.Linear(feature_dim, n_prototypes, bias=False)
 
         # create the queue
         if queue_size > 0:
             # we use the first 2 crops (global views) to get assignments
-            self.register_buffer("queue", torch.zeros(2, queue_size, dim))
+            self.register_buffer("queue", torch.zeros(2, queue_size, feature_dim))
             self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
     def forward(self, inputs):
@@ -135,10 +158,10 @@ class SwAVLoss(nn.Module):
 
 
 class MultiPrototypes(nn.Module):
-    def __init__(self, output_dim, num_prototypes):
+    def __init__(self, output_dim, n_prototypes):
         super(MultiPrototypes, self).__init__()
-        self.n_heads = len(num_prototypes)
-        for i, k in enumerate(num_prototypes):
+        self.n_heads = len(n_prototypes)
+        for i, k in enumerate(n_prototypes):
             self.add_module("prototypes" + str(i), nn.Linear(output_dim, k, bias=False))
 
     def forward(self, x):
