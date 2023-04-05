@@ -53,9 +53,9 @@ class VAE:
         return Model(self.z_inputs, self.x_decoded)
 
 
-class CVAE():
+class ConvVAE():
     def __init__(self, input_shape, h_dim, z_dim):
-        super(CVAE, self).__init__()
+        super(ConvVAE, self).__init__()
         # encoder
         self.x_inputs = Input(shape=input_shape)
         self.conv1 = Conv2D(32, kernel_size=3, activation='relu',

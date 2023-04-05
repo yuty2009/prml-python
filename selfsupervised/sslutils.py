@@ -108,7 +108,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-    for images, _ in data_bar:
+    for step, (images, _) in enumerate(data_bar):
 
         images[0] = images[0].to(args.device)
         images[1] = images[1].to(args.device)
@@ -135,7 +135,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         if show_bar:
             data_bar.set_description(
                 "Train Epoch: [{}/{}] lr: {:.6f} Loss: {:.4f}".format(
-                    epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss / len(data_loader)))
+                    epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss / (step+1)))
 
     return total_loss / len(data_loader)
 

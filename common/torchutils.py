@@ -60,29 +60,28 @@ def evaluate(data_loader, model, criterion, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-    with torch.no_grad():
-        for data, target in data_bar:
-            data = data.to(args.device)
-            target = target.to(args.device)
-            # compute output
-            output = model(data)
-            loss = criterion(output, target)
+    for data, target in data_bar:
+        data = data.to(args.device)
+        target = target.to(args.device)
+        # compute output
+        output = model(data)
+        loss = criterion(output, target)
 
-            loss = dist.all_reduce(loss)
-            total_loss += loss.item()
-            total_num += data.size(0)
-            preds = torch.argsort(output, dim=-1, descending=True)
-            for i, k in enumerate(args.topk):
-                    total_corrects[i] += torch.sum((preds[:, 0:k] \
-                        == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
-            accuks = 100 * total_corrects / total_num
+        loss = dist.all_reduce(loss)
+        total_loss += loss.item()
+        total_num += data.size(0)
+        preds = torch.argsort(output, dim=-1, descending=True)
+        for i, k in enumerate(args.topk):
+                total_corrects[i] += torch.sum((preds[:, 0:k] \
+                    == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+        accuks = 100 * total_corrects / total_num
 
-            if show_bar:
-                info = "Test  Epoch: [{}/{}] Loss: {:.4f} ".format(
-                    epoch, args.epochs, total_loss/len(data_loader))
-                info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
-                                for k, accuk in zip(args.topk, accuks)])
-                data_bar.set_description(info)
+        if show_bar:
+            info = "Test  Epoch: [{}/{}] Loss: {:.4f} ".format(
+                epoch, args.epochs, total_loss/len(data_loader))
+            info += ' '.join(["Acc@{}: {:.2f}".format(k, accuk) 
+                            for k, accuk in zip(args.topk, accuks)])
+            data_bar.set_description(info)
     
     return [total_loss/len(data_loader)] + [accuk for accuk in accuks]
 
@@ -97,6 +96,24 @@ def adjust_learning_rate(optimizer, epoch, args):
             lr *= 0.1 if epoch >= int(milestone * args.epochs) else 1.
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+
+def load_checkpoint(ckptpath, model, optimizer, args=None):
+    if os.path.isfile(ckptpath):
+        checkpoint = torch.load(ckptpath, map_location='cpu')
+        state_dict = convert_state_dict(checkpoint['state_dict'])
+        model.load_state_dict(state_dict)
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        if args is not None: 
+            args.start_epoch = 0
+            if 'epoch' in checkpoint:
+                args.start_epoch = checkpoint['epoch']
+            print("=> loaded checkpoint '{}' (epoch {})"
+                    .format(ckptpath, args.start_epoch))
+        else:
+            print("=> loaded checkpoint '{}'".format(ckptpath))
+    else:
+        print("=> no checkpoint found at '{}'".format(ckptpath))
 
 
 def save_checkpoint(state, epoch, is_best, save_dir='./'):

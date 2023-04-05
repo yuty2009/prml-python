@@ -84,7 +84,7 @@ def convert_model(args, model):
             model = torch.nn.parallel.DistributedDataParallel(model)
     elif args.gpu is not None:
         torch.cuda.set_device(args.gpu)
-    else:
+    elif args.ngpus > 1:
         args.dataparallel = True
         print("Use multi-GPU DataParallel for training")
         model = torch.nn.DataParallel(model).to(args.device)

@@ -9,7 +9,10 @@ import numpy as np
 
 ## sigmoid activation function
 def sigmoid(x):
-    return 1. / (1. + np.exp(-x))
+    if x >= 0:
+        return 1. / (1. + np.exp(-x))
+    else:
+        return np.exp(x) / (1. + np.exp(x))
 
 
 ## softmax activation function
