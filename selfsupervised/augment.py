@@ -1,6 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-from PIL import ImageFilter
 import random
+from PIL import Image, ImageFilter
+
+import torch
 import torchvision.transforms as transforms
 
 
@@ -14,6 +16,17 @@ class TransformContrast:
         q = self.base_transform(x)
         k = self.base_transform(x)
         return [q, k]
+
+
+class TransformMultiCrops:
+    """Take multiple random crops of one image."""
+
+    def __init__(self, trans):
+        self.trans = trans
+
+    def __call__(self, x):
+        multi_crops = list(map(lambda trans: trans(x), self.trans))
+        return multi_crops
 
 
 class GaussianBlur(object):
@@ -51,19 +64,7 @@ def get_transforms(type='', size=224, mean_std=None, color_jitter_s=1.0):
                 transforms.ToTensor(),
                 normalize,
             ])
-    elif str.lower(type) in ['simclr', 'simclr_v1', 'moco', 'moco_v1']:
-        return transforms.Compose(
-            [
-                transforms.RandomResizedCrop(size),
-                transforms.RandomHorizontalFlip(),  # with 0.5 probability
-                transforms.RandomApply([
-                    transforms.ColorJitter(0.4*s, 0.4*s, 0.4*s, 0.1*s),
-                ], p=0.8),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.ToTensor(),
-                normalize
-            ])
-    elif str.lower(type) in ['mocov2', 'moco_v2', 'byol', 'simsiam']:
+    elif str.lower(type) in ['ssl']:
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size),
@@ -79,8 +80,16 @@ def get_transforms(type='', size=224, mean_std=None, color_jitter_s=1.0):
             ])
         
 
-def get_multicrop_transforms(size_crops, num_crops, mean_std=None, color_jitter_s=1.0):
+def get_multicrop_transforms(
+    size_crops, num_crops, min_scales=None, max_scales=None,
+    mean_std=None, color_jitter_s=1.0):
+
+    if min_scales is None: min_scales = [0.08] * len(num_crops)
+    if max_scales is None: max_scales = [1.00] * len(num_crops)
+
     assert len(size_crops) == len(num_crops)
+    assert len(min_scales) == len(num_crops)
+    assert len(max_scales) == len(num_crops)
 
     s = color_jitter_s
     normalize = None
@@ -92,7 +101,7 @@ def get_multicrop_transforms(size_crops, num_crops, mean_std=None, color_jitter_
     for i in range(len(size_crops)):
         randomresizedcrop = transforms.RandomResizedCrop(
                 size_crops[i],
-                # scale=(min_scale_crops[i], max_scale_crops[i]),
+                scale=(min_scales[i], max_scales[i]),
             )
         trans.extend([transforms.Compose([
                 randomresizedcrop,
@@ -106,3 +115,30 @@ def get_multicrop_transforms(size_crops, num_crops, mean_std=None, color_jitter_
             ] * num_crops[i])
     
     return trans
+
+
+class MultiCropDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        dataset,
+        transforms,
+        return_index=False,
+    ):
+        super(MultiCropDataset, self).__init__()
+        self.return_index = return_index
+        self.trans = transforms
+        self.dataset = dataset
+
+    def __getitem__(self, index):
+        img, _ = self.dataset[index]
+        if isinstance(img, str):
+            with open(img, 'rb') as f:
+                img = Image.open(f)
+                img = img.convert('RGB')
+        multi_crops = list(map(lambda trans: trans(img), self.trans))
+        if self.return_index:
+            return index, multi_crops
+        return multi_crops
+
+    def __len__(self):
+        return len(self.dataset)

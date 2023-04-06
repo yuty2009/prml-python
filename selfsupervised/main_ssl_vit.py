@@ -16,6 +16,7 @@ import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
 from sslutils import *
+from vit import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -31,7 +32,7 @@ parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path to dataset')
 parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path where to save, empty for no saving')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='vit',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
@@ -128,8 +129,18 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    base_encoder = models.__dict__[args.arch]()
-    base_encoder = get_base_encoder(base_encoder, args)
+    base_encoder = ViT(
+        num_classes = 10,
+        image_size = args.image_size,
+        patch_size = 4,
+        d_model = 384,
+        nhead = 8,
+        num_layers = 7,
+        ffn_dim = 384*4,
+        dropout = 0.,
+    )
+    args.encoder_dim = base_encoder.fc[0].weight.shape[1]
+    base_encoder.fc = nn.Identity()
     model, criterion = get_ssl_model_and_criterion(base_encoder, args)
     # print(model)
     optimizer = get_optimizer(model, args)

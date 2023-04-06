@@ -1,4 +1,5 @@
 
+import copy
 import numpy as np
 import scipy as sp
 from utils import *
@@ -45,6 +46,53 @@ class PCA(LinearModel):
         return np.dot(X, self.PC)
 
 
+class kmeans(LinearModel):
+    """k-means clustering"""
+
+    def __init__(self, k, n_iters=50, verbose=True):
+        self.k = k
+        self.n_iters = n_iters
+        self.verbose = verbose
+
+    def fit(self, X, y=None, args=None):
+        N = X.shape[0]
+        assert N >= self.k, "number of samples should be larger than k"
+        self.centroids = copy.deepcopy(X[:self.k])
+        self.indices = np.zeros(N, dtype=np.int)
+        for it in range(self.n_iters):
+            indices_old = copy.deepcopy(self.indices)
+            dist = np.zeros((N, self.k), dtype=np.float)
+            self.index_list = [[] for i in range(self.k)]
+            # update cluster assignments
+            for i in range(N):
+                for j in range(self.k):
+                    dist[i, j] = np.linalg.norm(X[i] - self.centroids[j])
+                ci = np.argmin(dist[i])
+                self.indices[i] = ci
+                self.index_list[ci].append(i)
+            # update centroids
+            for j in range(self.k):
+                self.centroids[j] = np.mean(X[self.index_list[j],:])
+
+            if np.array_equal(self.indices, indices_old):
+                if self.verbose:
+                    print(f"clustering ended after {it+1} iterations")
+                break
+
+        if it >= self.n_iters and self.verbose:
+            print(f"clustering ended due to maximum iterations")
+
+    def predict(self, X, args=None):
+        N = X.shape[0]
+        y = np.zeros(N, dtype=np.int)
+        dist = np.zeros((N, self.k), dtype=np.float)
+        for i in range(N):
+            for j in range(self.k):
+                dist[i, j] = np.linalg.norm(X[i] - self.centroids[j])
+            y[i] = np.argmin(dist[i])
+        return y
+
+
 class kNN(LinearModel):
     """k-nearest neighbor classifier"""
 
@@ -58,7 +106,20 @@ class kNN(LinearModel):
         self.y = y
 
     def predict(self, X, args=None):
-        return super().predict(X, args)
+        N1 = X.shape[0]
+        N2 = self.X.shape[0]
+        assert X.shape[1] == self.X.shape[1], "dimension mismatch"
+        y = np.zeros(N1, np.int)
+        for i in range(N1):
+            dist = np.zeros(N2, dtype=np.float)
+            for j in range(N2):
+                dist[j] = np.linalg.norm(X[i] - self.X[j])
+            nbs = np.argsort(dist, axis=None)[:self.k]
+            counts = np.zeros(self.num_classes, dtype=np.int)
+            for k in range(self.num_classes):
+                counts[k] = len(np.argwhere(self.y[nbs]==k))
+            y[i] = np.argmax(counts)
+        return y
 
 
 class BernoulliNB(LinearModel):
@@ -349,15 +410,18 @@ if __name__ == "__main__":
         dataloader.data, dataloader.target, test_size=0.2, random_state=20)
 
     model0 = GNB()
-    model = GaussianNB(num_classes=2)
-    # model = SoftmaxClassifier()
+    model1 = kNN(num_classes=2)
+    # model1 = GaussianNB(num_classes=2)
+    # model1 = SoftmaxClassifier()
+    model2 = kmeans(k=2)
 
     model0.fit(X_train, y_train)
-    model.fit(X_train, y_train)
+    model1.fit(X_train, y_train)
+    model2.fit(X_train)
     y_pred0 = model0.predict(X_test)
-    y_pred, _ = model.predict(X_test)
+    y_pred1 = model1.predict(X_test)
 
     accu0 = metrics.accuracy_score(y_pred0, y_test)
-    accu = metrics.accuracy_score(y_pred, y_test)
+    accu1 = metrics.accuracy_score(y_pred1, y_test)
     # accu = np.sum(np.equal(y_pred, y_test))/len(y_test)
-    print(f"accu0 is {accu0} and accu is {accu}")
+    print(f"accu0 is {accu0} and accu is {accu1}")

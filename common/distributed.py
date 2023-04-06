@@ -121,8 +121,16 @@ def all_reduce(tensor):
         output = tensor
     else:
         output = tensor.data.clone()
-        dist.all_reduce(output.div_(dist.get_world_size()))
+        dist.all_reduce(output)
+        # dist.all_reduce(output.div_(dist.get_world_size()))
     return output
+
+
+def broadcast(tensor, src):
+    if dist.is_available() and \
+       dist.is_initialized() and \
+       dist.get_world_size() > 1:
+        dist.broadcast(tensor, src)
 
     
 class GatherLayer(torch.autograd.Function):
