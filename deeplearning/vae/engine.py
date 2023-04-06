@@ -7,7 +7,7 @@ def train(train_loader, model, optimizer, epoch, device):
     for batch_idx, (data_batch, _) in enumerate(train_loader):
         data_batch = data_batch.to(device)
         optimizer.zero_grad()
-        data_recon, loss = model(data_batch)
+        loss, data_recon = model(data_batch)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
@@ -28,7 +28,7 @@ def test(test_loader, model, epoch, device):
         for i, (data_batch, _) in enumerate(test_loader):
             batch_size = data_batch.size(0)
             data_batch = data_batch.to(device)
-            data_recon, loss = model(data_batch)
+            loss, data_recon = model(data_batch)
             test_loss += loss.item()
             if i == 0:
                 n = min(data_batch.size(0), 8)

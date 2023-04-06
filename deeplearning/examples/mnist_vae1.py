@@ -6,7 +6,7 @@ import torch.optim as optim
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 from dataloader.mnistreader import *
-from deeplearning.vae.vae_pytorch import *
+from deeplearning.vae.vae import *
 
 imsize = 28
 datapath = 'e:/prmldata/mnist/'

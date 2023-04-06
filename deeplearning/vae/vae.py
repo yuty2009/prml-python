@@ -25,9 +25,9 @@ class VAE(nn.Module):
     def forward(self, x):
         z_mean, z_log_var = self.encode(x)
         z_sampled = self.reparameterize(z_mean, z_log_var)
-        x_decoded = self.decode(z_sampled)
-        loss, _, _ = self.loss(x, x_decoded, z_mean, z_log_var)
-        return x_decoded, loss
+        x_recon = self.decode(z_sampled)
+        loss, _, _ = self.loss(x, x_recon, z_mean, z_log_var)
+        return loss, x_recon
 
     def encode(self, x):
         x = x.view(-1, x.size(-2)*x.size(-1))
@@ -86,9 +86,9 @@ class ConvVAE(nn.Module):
     def forward(self, x):
         z_mean, z_log_var = self.encode(x)
         z_sampled = self.reparameterize(z_mean, z_log_var)
-        x_decoded = self.decode(z_sampled)
-        loss, _, _ = self.loss(x, x_decoded, z_mean, z_log_var)
-        return x_decoded, loss
+        x_recon = self.decode(z_sampled)
+        loss, _, _ = self.loss(x, x_recon, z_mean, z_log_var)
+        return loss, x_recon
 
     def encode(self, x):
         x = self.conv1(x)
