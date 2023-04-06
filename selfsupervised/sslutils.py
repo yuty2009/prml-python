@@ -1,7 +1,6 @@
 
 import os
 import tqdm
-import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.datasets as datasets
@@ -10,7 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, barlowtwins, byol, simsiam, swav, deepcluster, dino
+import moco, simclr, byol, simsiam
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -77,48 +76,32 @@ class KNNClassifier(nn.Module):
         return pred_labels
 
 
-class MultiCropWrapper(nn.Module):
-    """
-    Copy-paste from: https://github.com/facebookresearch/dino/utils.py
-    Perform forward pass separately on each resolution input.
-    The inputs corresponding to a single resolution are clubbed and single
-    forward is run on the same resolution inputs. Hence we do several
-    forward passes = number of different resolutions used. We then
-    concatenate all the output features and run the head forward on these
-    concatenated features.
-    """
-    def __init__(self, backbone, head):
-        super(MultiCropWrapper, self).__init__()
-        # disable layers dedicated to ImageNet labels classification
-        backbone.fc, backbone.head = nn.Identity(), nn.Identity()
-        self.backbone = backbone
-        self.head = head
+class NT_Xent(nn.Module):
+    def __init__(self, temperature=0.5):
+        super(NT_Xent, self).__init__()
+        self.temperature = temperature
 
-    def forward(self, x):
-        # convert to list
-        if not isinstance(x, list):
-            x = [x]
-        idx_crops = torch.cumsum(torch.unique_consecutive(
-            torch.tensor([inp.shape[-1] for inp in x]),
-            return_counts=True,
-        )[1], 0)
-        start_idx, output = 0, torch.empty(0).to(x[0].device)
-        for end_idx in idx_crops:
-            _out = self.backbone(torch.cat(x[start_idx: end_idx]))
-            # The output is a tuple with XCiT model. See:
-            # https://github.com/facebookresearch/xcit/blob/master/xcit.py#L404-L405
-            if isinstance(_out, tuple):
-                _out = _out[0]
-            # accumulate outputs
-            output = torch.cat((output, _out))
-            start_idx = end_idx
-        # Run the head forward on the concatenated features.
-        return self.head(output)
+    def forward(self, z_i, z_j):
+        N = z_i.shape[0]
+        # [2*B, D]
+        out = torch.cat([z_i, z_j], dim=0)
+        # [2*B, 2*B]
+        sim_matrix = torch.exp(torch.mm(out, out.t().contiguous()) / self.temperature)
+        mask = (torch.ones_like(sim_matrix) - torch.eye(2 * N, device=sim_matrix.device)).bool()
+        # [2*B, 2*B-1]
+        sim_matrix = sim_matrix.masked_select(mask).view(2 * N, -1)
+        # compute loss
+        pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / self.temperature)
+        # [2*B]
+        pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+        loss = (- torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
+        return loss
 
 
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
-    
+    total_loss = 0.0
+
     show_bar = False
     if not hasattr(args, 'distributed') or not args.distributed or \
        not hasattr(args, 'rank') or args.rank == 0:
@@ -127,40 +110,23 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
 
     for step, (images, _) in enumerate(data_bar):
 
-        for i in range(len(images)):
-            images[i] = images[i].to(args.device)
+        images[0] = images[0].to(args.device)
+        images[1] = images[1].to(args.device)
 
-        if str.lower(args.ssl) in ['moco', 'moco_v1', 'moco_v2']:
-            if hasattr(args, 'symmetric') and args.symmetric:
-                q1, q2, k1, k2, queue = model(images[0], images[1])
-                loss = 0.5 * (criterion(q1, k1, queue) + criterion(q2, k2, queue))
-            else:
-                q1, k1 = model(images[0], images[1])
-                loss = criterion(q1, k1, queue)
-        elif str.lower(args.ssl) in ['simclr', 'barlowtwins']:
-            z1, z2 = model(images[0], images[1])
-            loss = criterion(z1, z2)
-        elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
+        if str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
             p1, p2, t1, t2 = model(images[0], images[1])
             loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
-        elif str.lower(args.ssl) in ['swav']:
-            output, embedding = model(images)
-            loss = criterion(output, embedding)
-        elif str.lower(args.ssl) in ['dino']:
-            output_s, output_t = model(images)
-            loss = criterion(output_s, output_t)
+        else: # 'moco'
+            if hasattr(args, 'symmetric') and args.symmetric:
+                p1, p2, t1, t2 = model(images[0], images[1])
+                loss = 0.5 * (criterion(p1, t1) + criterion(p2, t2))
+            else:
+                p1, t1 = model(images[0], images[1])
+                loss = criterion(p1, t1)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
-
-        if str.lower(args.ssl) in ['swav', 'deepcluster']:
-            # cancel gradients for the prototypes
-            if iteration < args.freeze_prototypes_niters:
-                for name, p in model.named_parameters():
-                    if "prototypes" in name:
-                        p.grad = None
-
         optimizer.step()
 
         loss = dist.all_reduce(loss)
@@ -226,7 +192,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.CIFAR10(
             args.data_dir, train=True, download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.CIFAR10(
@@ -244,7 +210,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.STL10(
             args.data_dir, split="unlabeled", download=True,
             transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.STL10(
@@ -262,7 +228,7 @@ def get_train_dataset(args, evaluate=False):
         train_dataset = datasets.ImageFolder(
             os.path.join(args.data_dir, 'train'),
             transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
         )
         if evaluate:
             memory_dataset = datasets.ImageFolder(
@@ -283,140 +249,6 @@ def get_train_dataset(args, evaluate=False):
         return train_dataset
 
 
-def get_ssl_model_and_criterion(base_encoder, args):
-    if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
-        # args.lr = 6e-2 # 6e-2 for cifar10
-        # args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 128
-        args.n_mlplayers = 1
-        args.hidden_dim = 512
-        args.moco_k = 4096 # 4096 for cifar10
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.temperature = 0.1 # 0.1 for cifar10
-        args.symmetric = True
-        model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True,
-            queue_size=args.moco_k, momentum=args.moco_m, symetric=args.symmetric)
-        criterion = moco.NTXentLossWithQueue(args.temperature)
-
-    elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
-        # args.lr = 6e-2 # 6e-2 for cifar10
-        # args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.temperature = 0.1 # 0.1 for cifar10
-        args.schedule = 'cos'
-        args.symmetric = True
-        model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True,
-            queue_size=args.moco_k, momentum=args.moco_m, symmetric=args.symmetric)
-        criterion = moco.NTXentLossWithQueue(args.temperature)
-
-    elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
-        # args.lr = 1e-3 # 1e-3 for cifar10
-        # args.weight_decay = 1e-6 # 1e-6 for cifar10
-        args.feature_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.temperature = 0.5
-        model = simclr.SimCLR(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True)
-        criterion = simclr.NTXentLoss(args.temperature)
-
-    elif str.lower(args.ssl) in ['barlowtwins']:
-        # args.lr = 1e-3 # 1e-3 for cifar10
-        # args.weight_decay = 1e-6 # 1e-6 for cifar10
-        args.feature_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.lambda_param = 0.5
-        model = barlowtwins.BarlowTwins(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True)
-        criterion = barlowtwins.BarlowTwinsLoss(args.lambda_param)
-
-    elif str.lower(args.ssl) in ['byol']:
-        args.feature_dim = 128
-        args.out_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.byol_m = 0.9
-        model = byol.BYOL(
-            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True,
-            momentum=args.byol_m)
-        criterion = nn.CosineSimilarity(dim=1)
-    
-    elif str.lower(args.ssl) in ['simsiam']:
-        args.feature_dim = 128
-        args.out_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        model = simsiam.SimSiam(
-            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True)
-        criterion = nn.CosineSimilarity(dim=1)
-
-    elif str.lower(args.ssl) in ['swav']:
-        args.feature_dim = 128
-        args.out_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.n_prototypes = 3000
-        args.num_crops = [2]
-        args.temperature = 0.1
-        args.freeze_prototypes_niters = 313
-        model = swav.SwAV(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=True,
-            n_prototypes=args.n_prototypes, ncrops=np.sum(args.num_crops))
-        criterion = swav.SwAVLoss(np.sum(args.num_crops), args.temperature)
-    
-    elif str.lower(args.ssl) in ['deepcluster', 'deepcluster2']:
-        args.feature_dim = 128
-        args.out_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.n_prototypes = 3000
-        args.temperature = 0.1
-        args.freeze_prototypes_niters = 313
-        model = deepcluster.DeepCluster(
-            base_encoder, args.encoder_dim, args.feature_dim,
-            args.n_mlplayers, args.hidden_dim, use_bn=False,
-            n_prototypes=args.n_prototypes)
-        criterion = nn.CrossEntropyLoss(ignore_index=-100)
-
-    elif str.lower(args.ssl) in ['dino']:
-        args.feature_dim = 128
-        args.out_dim = 128
-        args.n_mlplayers = 2
-        args.hidden_dim = 512
-        args.dino_m = 0.996
-        args.num_crops = [2]
-        args.temperature_s = 0.1
-        args.temperature_t = 0.04
-        model = dino.DINO(
-            base_encoder, args.encoder_dim, args.feature_dim, args.out_dim, 
-            args.n_mlplayers, args.hidden_dim, use_bn=True,
-            momentum=args.dino_m)
-        criterion = dino.DINOLoss(
-            args.out_dim, np.sum(args.num_crops), args.temperature_s, args.temperature_t)
-    
-    else:
-        raise NotImplementedError
-
-    model = model.to(args.device)
-    criterion = criterion.to(args.device)
-
-    return model, criterion
-
-
 def get_base_encoder(base_encoder, args):
     module_list = []
     for name, module in base_encoder.named_children():
@@ -432,6 +264,76 @@ def get_base_encoder(base_encoder, args):
         module_list.append(module)
     base_encoder = nn.Sequential(*module_list)
     return base_encoder
+    
+
+def get_ssl_model_and_criterion(base_encoder, args):
+    if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
+        # args.lr = 6e-2 # 6e-2 for cifar10
+        # args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.feature_dim = 512
+        args.dim = 128
+        args.moco_k = 4096 # 4096 for cifar10
+        args.moco_m = 0.99 # 0.99 for cifar10
+        args.temperature = 0.1 # 0.1 for cifar10
+        args.mlp = False
+        args.symmetric = True
+        model = moco.MoCo(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            args.moco_k, args.moco_m, args.temperature, args.mlp,
+            args.symmetric)
+        criterion = nn.CrossEntropyLoss()
+
+    elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
+        # args.lr = 6e-2 # 6e-2 for cifar10
+        # args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.feature_dim = 512
+        args.dim = 128
+        args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
+        args.moco_m = 0.99 # 0.99 for cifar10
+        args.temperature = 0.1 # 0.1 for cifar10
+        args.mlp = True
+        args.schedule = 'cos'
+        args.symmetric = True
+        model = moco.MoCo(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            args.moco_k, args.moco_m, args.temperature, args.mlp,
+            args.symmetric)
+        criterion = nn.CrossEntropyLoss()
+
+    elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
+        # args.lr = 1e-3 # 1e-3 for cifar10
+        # args.weight_decay = 1e-6 # 1e-6 for cifar10
+        args.feature_dim = 512
+        args.dim = 128
+        args.temperature = 0.5
+        model = simclr.SimCLR(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim, 
+            args.temperature)
+        criterion = nn.CrossEntropyLoss()
+
+    elif str.lower(args.ssl) in ['byol']:
+        args.feature_dim = 512
+        args.dim = 128
+        args.byol_m = 0.9
+        model = byol.BYOL(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
+            args.byol_m)
+        criterion = nn.CosineSimilarity(dim=1)
+    
+    elif str.lower(args.ssl) in ['simsiam']:
+        args.feature_dim = 512
+        args.dim = 128
+        model = simsiam.SimSiam(
+            base_encoder, args.encoder_dim, args.feature_dim, args.dim)
+        criterion = nn.CosineSimilarity(dim=1)
+    
+    else:
+        raise NotImplementedError
+
+    model = model.to(args.device)
+    criterion = criterion.to(args.device)
+
+    return model, criterion
 
 
 def get_optimizer(model, args):
@@ -451,4 +353,3 @@ def get_optimizer(model, args):
         optimizer = torch.optim.Adam(
             model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     return optimizer
-
