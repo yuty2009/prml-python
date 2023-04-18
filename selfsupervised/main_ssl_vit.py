@@ -16,7 +16,7 @@ import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
 from sslutils import *
-from vit import *
+from vit_timm import ViT
 
 
 model_names = sorted(name for name in models.__dict__
@@ -51,7 +51,7 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
+parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
@@ -60,8 +60,8 @@ parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)',
+parser.add_argument('--wd', '--weight-decay', default=5e-2, type=float,
+                    metavar='W', help='weight decay (default: 5e-2)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), nargs='*', type=int,
                     help='top k accuracy')
@@ -129,18 +129,20 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
+    args.encoder_dim = 384
     base_encoder = ViT(
-        num_classes = 10,
         image_size = args.image_size,
         patch_size = 4,
-        d_model = 384,
-        nhead = 8,
+        in_chans = 3,
+        num_classes = 0, # make the classifier head to be nn.Identity()
+        embed_dim = args.encoder_dim,
         num_layers = 7,
-        ffn_dim = 384*4,
-        dropout = 0.,
+        num_heads = 8,
+        mlp_ratio = 4,
+        drop_rate = 0.1,
+        attn_drop_rate = 0.1,
+        pool = 'cls',
     )
-    args.encoder_dim = base_encoder.fc[0].weight.shape[1]
-    base_encoder.fc = nn.Identity()
     model, criterion = get_ssl_model_and_criterion(base_encoder, args)
     # print(model)
     optimizer = get_optimizer(model, args)

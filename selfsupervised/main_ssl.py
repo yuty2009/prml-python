@@ -23,7 +23,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='swav', type=str,
+parser.add_argument('--ssl', default='dino', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
@@ -36,7 +36,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -50,7 +50,7 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
+parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
@@ -82,7 +82,7 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--mp', '--mp-dist', action='store_true',
+parser.add_argument('--mp', '--mp-dist', action='store_true', default=False,
                     help='Use multi-processing distributed training to launch '
                         'N processes per node, which has N GPUs. This is the '
                         'fastest way to use PyTorch for either single node or '

@@ -34,8 +34,10 @@ class MoCo(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        n_mlplayers = max(n_mlplayers, 1)
         activation = nn.ReLU(inplace=True)
+        if n_mlplayers < 1:
+            self.projector = nn.Identity()
+            feature_dim = encoder_dim
         if n_mlplayers == 1:
             self.projector = nn.Linear(encoder_dim, feature_dim)
         else:

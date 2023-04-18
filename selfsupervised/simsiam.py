@@ -29,13 +29,13 @@ class SimSiam(nn.Module):
         z = normalize(z, dim=1) # l2-normalize
         return -(p*z).sum(dim=1).mean()
     """
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, out_dim=512,
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=2048, predict_dim=512,
         n_mlplayers=2, hidden_dim=2048, use_bn=False):
         """
         - encoder: encoder you want to use to get feature representations (eg. resnet50)
         - encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
         - feature_dim: dimension of the projector output (default: 512)
-        - out_dim: hidden dimension of the predictor (default: 512)
+        - predict_dim: hidden dimension of the predictor (default: 512)
         - n_mlplayers: number of MLP layers for the projector (default: 2)
         - hidden_dim: hidden dimension if a multi-layer projector was used (default: 2048)
         - use_bn: whether use batch normalization (default: False)
@@ -75,7 +75,7 @@ class SimSiam(nn.Module):
         self.predictor = nn.Sequential(nn.Linear(feature_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # hidden layer
-                                        nn.Linear(feature_dim, out_dim)) # output layer
+                                        nn.Linear(feature_dim, predict_dim)) # output layer
 
     def forward(self, x1, x2):
         """

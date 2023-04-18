@@ -9,7 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import moco, simclr, byol, simsiam
+import moco, simclr, swav, byol, simsiam, dino
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
@@ -113,16 +113,25 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         images[0] = images[0].to(args.device)
         images[1] = images[1].to(args.device)
 
-        if str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
+        if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1', 'mocov2', 'moco_v2']:
+            if hasattr(args, 'symmetric') and args.symmetric:
+                p1, p2, t1, t2, queue = model(images[0], images[1])
+                loss = 0.5 * (criterion(p1, t1, queue) + criterion(p2, t2, queue))
+            else:
+                p1, t1, queue = model(images[0], images[1])
+                loss = criterion(p1, t1, queue)
+
+        elif str.lower(args.ssl) in ['simclr', 'simclr_v1']: # big batch_size required
+            p1, t1 = model(images[0], images[1])
+            loss = 0.5 * (criterion(p1, t1) + criterion(t1, p1))
+
+        elif str.lower(args.ssl) in ['swav', 'dino']: # multi-crop supported
+            p1, t1 = model(images)
+            loss = criterion(p1, t1)
+
+        elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
             p1, p2, t1, t2 = model(images[0], images[1])
             loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
-        else: # 'moco'
-            if hasattr(args, 'symmetric') and args.symmetric:
-                p1, p2, t1, t2 = model(images[0], images[1])
-                loss = 0.5 * (criterion(p1, t1) + criterion(p2, t2))
-            else:
-                p1, t1 = model(images[0], images[1])
-                loss = criterion(p1, t1)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -185,70 +194,6 @@ def evaluate_ssl(memory_loader, test_loader, model, epoch, args):
     return total_top1 / total_num * 100, total_top5 / total_num * 100
 
 
-def get_train_dataset(args, evaluate=False):
-    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
-        args.image_size = 32
-        args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        train_dataset = datasets.CIFAR10(
-            args.data_dir, train=True, download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-        if evaluate:
-            memory_dataset = datasets.CIFAR10(
-                args.data_dir, train=True, download=True,
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-            test_dataset = datasets.CIFAR10(
-                args.data_dir, train=False, download=True,
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-
-    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
-        args.image_size = 96
-        args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
-        train_dataset = datasets.STL10(
-            args.data_dir, split="unlabeled", download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-        if evaluate:
-            memory_dataset = datasets.STL10(
-                args.data_dir, split="train", download=True,
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-            test_dataset = datasets.STL10(
-                args.data_dir, split="test", download=True,
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-
-    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
-        args.image_size = 224
-        args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        train_dataset = datasets.ImageFolder(
-            os.path.join(args.data_dir, 'train'),
-            transform=augment.TransformContrast(
-                augment.get_transforms(args.ssl, args.image_size, args.mean_std)),
-        )
-        if evaluate:
-            memory_dataset = datasets.ImageFolder(
-                os.path.join(args.data_dir, 'train'),
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-            test_dataset = datasets.ImageFolder(
-                os.path.join(args.data_dir, 'val'),
-                transform=augment.get_transforms('test', args.image_size, args.mean_std)
-            )
-
-    else:
-        raise NotImplementedError
-
-    if evaluate:
-        return train_dataset, memory_dataset, test_dataset
-    else:
-        return train_dataset
-
-
 def get_base_encoder(base_encoder, args):
     module_list = []
     for name, module in base_encoder.named_children():
@@ -268,64 +213,149 @@ def get_base_encoder(base_encoder, args):
 
 def get_ssl_model_and_criterion(base_encoder, args):
     if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
-        # args.lr = 6e-2 # 6e-2 for cifar10
-        # args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
-        args.dim = 128
-        args.moco_k = 4096 # 4096 for cifar10
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.temperature = 0.1 # 0.1 for cifar10
-        args.mlp = False
-        args.symmetric = True
+        args.n_mlplayers = 0
+        args.hidden_dim = 128
+        args.use_bn = False
+        args.queue_size = 4096 # 4096 for cifar10, 65536 for ImageNet
+        args.momentum = 0.99 # 0.99 for cifar10
+        args.symmetric = False
+        args.schedule = 'cos'
+        args.temperature = 0.07 # 0.1 for cifar10
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.moco_k, args.moco_m, args.temperature, args.mlp,
-            args.symmetric)
-        criterion = nn.CrossEntropyLoss()
+            encoder = base_encoder,
+            encoder_dim = args.encoder_dim,
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+            queue_size = args.queue_size,
+            momentum = args.momentum, 
+            symetric = args.symmetric,
+        )
+        criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
-        # args.lr = 6e-2 # 6e-2 for cifar10
-        # args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
-        args.dim = 128
-        args.moco_k = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.moco_m = 0.99 # 0.99 for cifar10
-        args.temperature = 0.1 # 0.1 for cifar10
-        args.mlp = True
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
+        args.queue_size = 4096 # 4096 for cifar10, 65536 for ImageNet
+        args.momentum = 0.99 # 0.99 for cifar10
+        args.symmetric = False
         args.schedule = 'cos'
-        args.symmetric = True
+        args.temperature = 0.1 # 0.1 for cifar10
         model = moco.MoCo(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.moco_k, args.moco_m, args.temperature, args.mlp,
-            args.symmetric)
-        criterion = nn.CrossEntropyLoss()
+            encoder = base_encoder,
+            encoder_dim = args.encoder_dim,
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+            queue_size = args.queue_size,
+            momentum = args.momentum, 
+            symetric = args.symmetric,
+        )
+        criterion = moco.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
-        # args.lr = 1e-3 # 1e-3 for cifar10
-        # args.weight_decay = 1e-6 # 1e-6 for cifar10
+        args.lr = 1e-3 # 1e-3 for cifar10
+        args.weight_decay = 1e-6 # 1e-6 for cifar10
         args.feature_dim = 512
-        args.dim = 128
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
         args.temperature = 0.5
         model = simclr.SimCLR(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim, 
-            args.temperature)
-        criterion = nn.CrossEntropyLoss()
+            encoder = base_encoder, 
+            encoder_dim = args.encoder_dim, 
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+        )
+        criterion = simclr.NTXentLoss(args.temperature)
+
+    elif str.lower(args.ssl) in ['swav']:
+        args.lr = 1e-3 # 1e-3 for cifar10
+        args.weight_decay = 1e-6 # 1e-6 for cifar10
+        args.feature_dim = 512
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
+        args.temperature = 0.5
+        model = swav.SwAV(
+            encoder = base_encoder, 
+            encoder_dim = args.encoder_dim, 
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+        )
+        criterion = swav.SwAVLoss(2, args.temperature)
 
     elif str.lower(args.ssl) in ['byol']:
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
-        args.dim = 128
-        args.byol_m = 0.9
+        args.predict_dim = 512
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
+        args.momentum = 0.9
         model = byol.BYOL(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim,
-            args.byol_m)
+            encoder = base_encoder, 
+            encoder_dim = args.encoder_dim, 
+            feature_dim = args.feature_dim,
+            predict_dim = args.predict_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+            momentum = args.momentum,
+        )
         criterion = nn.CosineSimilarity(dim=1)
     
     elif str.lower(args.ssl) in ['simsiam']:
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
-        args.dim = 128
+        args.predict_dim = 512
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
         model = simsiam.SimSiam(
-            base_encoder, args.encoder_dim, args.feature_dim, args.dim)
+            encoder = base_encoder,
+            encoder_dim = args.encoder_dim,
+            feature_dim = args.feature_dim,
+            predict_dim = args.predict_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+        )
         criterion = nn.CosineSimilarity(dim=1)
+
+    elif str.lower(args.ssl) in ['dino']:
+        args.feature_dim = 512
+        args.n_mlplayers = 3
+        args.hidden_dim = 512
+        args.bottleneck_dim = 512
+        args.use_bn = False
+        args.momentum = 0.9
+        model = dino.DINO(
+            encoder = base_encoder, 
+            encoder_dim = args.encoder_dim, 
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            bottleneck_dim = args.bottleneck_dim,
+            use_bn = args.use_bn,
+            momentum = args.momentum,
+        )
+        criterion = dino.DINOLoss(out_dim=args.feature_dim)
     
     else:
         raise NotImplementedError
@@ -353,3 +383,68 @@ def get_optimizer(model, args):
         optimizer = torch.optim.Adam(
             model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     return optimizer
+
+
+def get_train_dataset(args, evaluate=False):
+    if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
+        args.image_size = 32
+        args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        train_dataset = datasets.CIFAR10(
+            args.data_dir, train=True, download=True,
+            transform=augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+        )
+        if evaluate:
+            memory_dataset = datasets.CIFAR10(
+                args.data_dir, train=True, download=True,
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+            test_dataset = datasets.CIFAR10(
+                args.data_dir, train=False, download=True,
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+
+    elif str.lower(args.dataset) in ['stl10', 'stl-10']:
+        args.image_size = 96
+        args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
+        train_dataset = datasets.STL10(
+            args.data_dir, split="unlabeled", download=True,
+            transform=augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+        )
+        if evaluate:
+            memory_dataset = datasets.STL10(
+                args.data_dir, split="train", download=True,
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+            test_dataset = datasets.STL10(
+                args.data_dir, split="test", download=True,
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+
+    elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
+        args.image_size = 224
+        args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        train_dataset = datasets.ImageFolder(
+            os.path.join(args.data_dir, 'train'),
+            transform=augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+        )
+        if evaluate:
+            memory_dataset = datasets.ImageFolder(
+                os.path.join(args.data_dir, 'train'),
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+            test_dataset = datasets.ImageFolder(
+                os.path.join(args.data_dir, 'val'),
+                transform=augment.get_transforms('test', args.image_size, args.mean_std)
+            )
+
+    else:
+        raise NotImplementedError
+
+    if evaluate:
+        return train_dataset, memory_dataset, test_dataset
+    else:
+        return train_dataset
+    

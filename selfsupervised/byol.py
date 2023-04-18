@@ -8,17 +8,17 @@ class BYOL(nn.Module):
     """
     Build a BYOL model. This model is adapted from SimSiam
     """
-    def __init__(self, encoder, encoder_dim=2048, feature_dim=512, out_dim=512,
-        n_mlplayers=2, hidden_dim=2048, use_bn=False,
+    def __init__(self, encoder, encoder_dim=2048, feature_dim=512, predict_dim=512,
+        n_mlplayers=2, hidden_dim=2048, use_bn=True,
         momentum=0.999):
         """
         - encoder: encoder you want to use to get feature representations (eg. resnet50)
         - encoder_dim: dimension of the encoder output, your feature dimension (default: 2048 for resnets)
         - feature_dim: dimension of the projector output (default: 512)
-        - out_dim: hidden dimension of the predictor (default: 512)
+        - predict_dim: hidden dimension of the predictor (default: 512)
         - n_mlplayers: number of MLP layers for the projector (default: 2)
         - hidden_dim: hidden dimension if a multi-layer projector was used (default: 2048)
-        - use_bn: whether use batch normalization (default: False)
+        - use_bn: whether use batch normalization (default: True)
         - momentum: momentum of updating key encoder (default: 0.999)
         """
         super(BYOL, self).__init__()
@@ -61,7 +61,7 @@ class BYOL(nn.Module):
         self.predictor = nn.Sequential(nn.Linear(feature_dim, feature_dim, bias=False),
                                         nn.BatchNorm1d(feature_dim),
                                         nn.ReLU(inplace=True), # hidden layer
-                                        nn.Linear(feature_dim, out_dim)) # output layer
+                                        nn.Linear(feature_dim, predict_dim)) # output layer
 
     @torch.no_grad()
     def _momentum_update_target_encoder(self):

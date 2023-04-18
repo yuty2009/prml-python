@@ -5,7 +5,7 @@ References:
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from common.attention import MultiheadAttention
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -13,36 +13,25 @@ class TransformerEncoderLayer(nn.Module):
         with modifications:
         * layer norm before add residual
     """
-    __constants__ = ['batch_first']
-
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu",
-                 layer_norm_eps=1e-5, batch_first=False, normalize_before=True,
-                 device=None, dtype=None) -> None:
-        factory_kwargs = {'device': device, 'dtype': dtype}
+    def __init__(self, embed_dim, num_heads, mlp_ratio=4.0, drop_rate=0., attn_drop_rate=0.,
+                 activation=nn.GELU, norm_layer=nn.LayerNorm, normalize_before=True):
         super(TransformerEncoderLayer, self).__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first,
-                                            **factory_kwargs)
+        self.self_attn = MultiheadAttention(embed_dim, num_heads, dropout=attn_drop_rate)
         # Implementation of Feedforward model
-        self.linear1 = nn.Linear(d_model, dim_feedforward, **factory_kwargs)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model, **factory_kwargs)
+        self.linear1 = nn.Linear(embed_dim, int(mlp_ratio*embed_dim))
+        self.dropout = nn.Dropout(drop_rate)
+        self.linear2 = nn.Linear(int(mlp_ratio*embed_dim), embed_dim)
 
-        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, **factory_kwargs)
-        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, **factory_kwargs)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = norm_layer(embed_dim)
+        self.norm2 = norm_layer(embed_dim)
+        self.dropout1 = nn.Dropout(drop_rate)
+        self.dropout2 = nn.Dropout(drop_rate)
 
-        self.activation = _get_activation_fn(activation)
+        self.activation = activation()
         self.normalize_before = normalize_before
 
-    def __setstate__(self, state):
-        if 'activation' not in state:
-            state['activation'] = F.relu
-        super(TransformerEncoderLayer, self).__setstate__(state)
-
-    def forward_post(self, src, src_mask = None, src_key_padding_mask = None):
-        src2 = self.self_attn(src, src, src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
+    def forward_post(self, src, src_mask = None):
+        src2 = self.self_attn(src, src, src, attn_mask=src_mask)[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
@@ -50,59 +39,26 @@ class TransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward_pre(self, src, src_mask = None, src_key_padding_mask = None):
+    def forward_pre(self, src, src_mask = None):
         src2 = self.norm1(src)
-        src2 = self.self_attn(src2, src2, src2, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
+        src2 = self.self_attn(src2, src2, src2, attn_mask=src_mask)[0]
         src = src + self.dropout1(src2)
         src2 = self.norm2(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
         src = src + self.dropout2(src2)
         return src
 
-    def forward(self, src, src_mask = None, src_key_padding_mask = None):
+    def forward(self, src, src_mask = None):
         if self.normalize_before:
-            return self.forward_pre(src, src_mask, src_key_padding_mask)
-        return self.forward_post(src, src_mask, src_key_padding_mask)
-
-
-class Transformer(nn.Module):
-    """Transformer class copy-paste from torch.nn.Transformer
-    """
-    def __init__(self, d_model: int = 512, nhead: int = 8, num_layers: int = 6,
-                 dim_feedforward: int = 2048, dropout: float = 0.1,
-                 activation: str = "relu", layer_norm_eps: float = 1e-5, 
-                 batch_first: bool = False, device=None, dtype=None) -> None:
-        factory_kwargs = {'device': device, 'dtype': dtype}
-        super(Transformer, self).__init__()
-
-        self.d_model = d_model
-        self.nhead = nhead
-        self.batch_first = batch_first
-
-        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout,
-                                                activation, layer_norm_eps, batch_first,
-                                                **factory_kwargs)
-        encoder_norm = nn.LayerNorm(d_model, eps=layer_norm_eps, **factory_kwargs)
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers, encoder_norm)
-
-        self._reset_parameters()
-
-    def forward(self, src):
-        output = self.encoder(src)
-        return output
-
-    def _reset_parameters(self):
-        r"""Initiate parameters in the transformer model."""
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+            return self.forward_pre(src, src_mask)
+        return self.forward_post(src, src_mask)
 
 
 class ViT(nn.Module):
-    def __init__(self, num_classes, image_size=224, patch_size=16,
-                 d_model = 768, nhead = 12, num_layers = 12, ffn_dim = 3072,
-                 pool = 'cls', in_channels = 3, dropout = 0.1):
+    def __init__(self, image_size=224, patch_size=16, in_chans=3, num_classes=0, 
+                 embed_dim=768, num_layers=12, num_heads=12, mlp_ratio=4.,
+                 drop_rate=0., attn_drop_rate=0., norm_layer=nn.LayerNorm,
+                 pool = 'cls'):
         super().__init__()
 
         ih, iw = pair(image_size)
@@ -116,42 +72,41 @@ class ViT(nn.Module):
                'pool type must be either cls (cls token) or mean (mean pooling).'
 
         # patch embedding
-        self.patch_embedding = nn.Conv2d(
-            in_channels, d_model, kernel_size=(ph, pw), stride=(ph, pw)
+        self.patch_embed = nn.Conv2d(
+            in_chans, embed_dim, kernel_size=(ph, pw), stride=(ph, pw)
         )
         # class token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         # positional encoding
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, d_model))
-        self.pos_drop = nn.Dropout(dropout)
-        # transformer
-        self.transformer = Transformer(
-            d_model = d_model,
-            nhead = nhead,
-            num_layers = num_layers,
-            dim_feedforward = 3 * d_model,
-            batch_first = True,
-        )
-        # classfier
-        # self.fc = nn.Linear(emb_dim, num_classes)
-        self.fc = nn.Sequential(
-            nn.Linear(d_model, ffn_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(ffn_dim, num_classes),
-            nn.Dropout(dropout)
-        )
+        self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, embed_dim))
+        self.pos_drop = nn.Dropout(drop_rate)
+        # transformer blocks
+        self.blocks = nn.ModuleList([
+            TransformerEncoderLayer(
+                embed_dim = embed_dim, num_heads = num_heads, mlp_ratio = mlp_ratio,
+                drop_rate = drop_rate, attn_drop_rate = attn_drop_rate,
+                activation = nn.GELU, norm_layer = nn.LayerNorm, normalize_before = True)
+            for _ in range(num_layers)])
+        self.norm = norm_layer(embed_dim)
+        # classfier head
+        self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, img):
-        x = self.patch_embedding(img) # (bs, emb_dim, n_ph, n_pw)
+        x = self.patch_embed(img) # (bs, emb_dim, n_ph, n_pw)
         x = x.flatten(2).permute(0, 2, 1) # (bs, num_patches, emb_dim)
         # prepend class token
         cls_token = self.cls_token.repeat(x.size(0), 1, 1)
         x = torch.cat([cls_token, x], dim=1) # (bs, num_patches+1, emb_dim)
-        x = self.pos_drop(x + self.pos_embedding)
-        x = self.transformer(x)
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
-        out = self.fc(x)
+        x = self.pos_drop(x + self.pos_embed)
+        for blk in self.blocks:
+            x = blk(x)
+        if self.pool == 'mean':
+            x = x[:, 1:, :].mean(dim=1) # pool without cls token
+            x = self.norm(x)
+        else:
+            x = self.norm(x)
+            x = x[:, 0] # cls token
+        out = self.head(x)
         return out
 
 
@@ -159,27 +114,16 @@ def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
 
-def _get_activation_fn(activation):
-    """Return an activation function given a string"""
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
-
-
 if __name__ == '__main__':
 
     model = ViT(
-        image_size=(256, 256),
-        patch_size=(16, 16),
-        num_classes=1000,
-        d_model = 768,
-        nhead = 12,
+        image_size = (256, 256),
+        patch_size = (16, 16),
+        num_classes = 1000,
+        embed_dim = 768,
         num_layers = 12,
-        ffn_dim = 3072,
+        num_heads = 12,
+        mlp_ratio = 4.0,
     )
 
     x = torch.randn((2, 3, 256, 256))
