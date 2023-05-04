@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
-from sslutils import *
+from selfsupervised.engine_ssl import *
 from vit_timm import ViT
 
 
@@ -24,22 +24,23 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='swav', type=str,
+parser.add_argument('--ssl', default='dino', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10', 
+parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10',
                     metavar='PATH', help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10',
+parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/output',
                     metavar='PATH', help='path where to save, empty for no saving')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='vit',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--global_pool', action='store_true', default=False)
+parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -53,15 +54,19 @@ parser.add_argument('--optimizer', default='sgd', type=str,
                     help='optimizer used to learn the model')
 parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--schedule', default='step', type=str,
+parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
+                    help='lower lr bound for cyclic schedulers that hit 0')
+parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
+                    help='epochs to warmup LR')
+parser.add_argument('--schedule', default='cos', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')
 parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=5e-2, type=float,
-                    metavar='W', help='weight decay (default: 5e-2)',
+parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+                    metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), nargs='*', type=int,
                     help='top k accuracy')
@@ -83,7 +88,7 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--mp', '--mp-dist', action='store_true',
+parser.add_argument('--mp', '--mp-dist', action='store_true', default=False,
                     help='Use multi-processing distributed training to launch '
                         'N processes per node, which has N GPUs. This is the '
                         'fastest way to use PyTorch for either single node or '
@@ -129,20 +134,23 @@ def main(gpu, args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    args.encoder_dim = 384
-    base_encoder = ViT(
-        image_size = args.image_size,
-        patch_size = 4,
-        in_chans = 3,
-        num_classes = 0, # make the classifier head to be nn.Identity()
-        embed_dim = args.encoder_dim,
-        num_layers = 7,
-        num_heads = 8,
-        mlp_ratio = 4,
-        drop_rate = 0.1,
-        attn_drop_rate = 0.1,
-        pool = 'cls',
-    )
+    if args.arch.startswith('resnet'):
+        base_encoder = models.__dict__[args.arch]()
+        base_encoder = get_base_encoder(base_encoder, args)
+    elif args.arch.startswith('vit'):
+        args.encoder_dim = 384
+        base_encoder = ViT(
+            image_size = args.image_size,
+            patch_size = 4,
+            in_chans = 3,
+            num_classes = 0, # make the classifier head to be nn.Identity()
+            embed_dim = args.encoder_dim,
+            num_layers = 6,
+            num_heads = 8,
+            mlp_ratio = 4,
+            pool='mean' if args.global_pool else 'cls',
+        )
+
     model, criterion = get_ssl_model_and_criterion(base_encoder, args)
     # print(model)
     optimizer = get_optimizer(model, args)

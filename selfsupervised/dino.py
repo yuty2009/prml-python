@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import common.distributed as dist
+from head import MLPHead
 
 
 class DINO(nn.Module):
@@ -32,13 +33,15 @@ class DINO(nn.Module):
 
         # create the online encoder
         self.encoder = encoder
-        self.head_s = DINOHead(
-            in_dim=encoder_dim, out_dim=feature_dim, use_bn=use_bn, norm_last_layer=norm_last_layer, 
-            nlayers=n_mlplayers, hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim,
+        self.head_s = MLPHead(
+            in_dim=encoder_dim, out_dim=feature_dim, n_layers=n_mlplayers, 
+            hidden_dims=[hidden_dim, bottleneck_dim], activation=nn.GELU(), 
+            use_bn=use_bn, norm_last_layer=norm_last_layer, 
         )
-        self.head_t = DINOHead(
-            in_dim=encoder_dim, out_dim=feature_dim, use_bn=use_bn, norm_last_layer=True, 
-            nlayers=n_mlplayers, hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim,
+        self.head_t = MLPHead(
+            in_dim=encoder_dim, out_dim=feature_dim, n_layers=n_mlplayers, 
+            hidden_dims=[hidden_dim, bottleneck_dim], activation=nn.GELU(), 
+            use_bn=use_bn, norm_last_layer=True, 
         )
         self.student = nn.Sequential(encoder, self.head_s)
         self.teacher = nn.Sequential(copy.deepcopy(encoder), self.head_t)
@@ -73,14 +76,14 @@ class DINO(nn.Module):
             start_idx = end_idx
         # only the 2 global views pass through the teacher
         output_t = self.teacher(torch.cat(inputs[:2]))
-        # normalize the outputs
+        # normalize feature embeddings (notice that it is already done in DINOHead)
         output_s = nn.functional.normalize(output_s, dim=1)
         output_t = nn.functional.normalize(output_t, dim=1)
         return output_s, output_t
 
 
 class DINOLoss(nn.Module):
-    def __init__(self, out_dim, ncrops=2, temperature_s=0.1, temperature_t=0.07, center_momentum=0.9):
+    def __init__(self, out_dim, ncrops=2, temperature_s=0.1, temperature_t=0.04, center_momentum=0.9):
         super().__init__()
         self.ncrops = ncrops
         self.temperature_s = temperature_s
@@ -120,7 +123,7 @@ class DINOLoss(nn.Module):
         """
         batch_center = torch.sum(output_t, dim=0, keepdim=True)
         dist.all_reduce(batch_center)
-        # batch_center = batch_center / (len(output_t) * dist.get_world_size())
+        batch_center /= len(output_t)
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 

@@ -87,15 +87,28 @@ def evaluate(data_loader, model, criterion, epoch, args):
 
 
 def adjust_learning_rate(optimizer, epoch, args):
-    """Decay the learning rate based on schedule"""
-    lr = args.lr
-    if args.schedule in ['cos', 'cosine']:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
-    elif args.schedule in ['step', 'stepwise']:  # stepwise lr schedule
-        for milestone in args.lr_drop:
-            lr *= 0.1 if epoch >= int(milestone * args.epochs) else 1.
+    """Decay the learning rate based on schedule after warmup"""
+    if not hasattr(args, 'warmup_epochs'):
+        args.warmup_epochs = 0
+    if not hasattr(args, 'min_lr'):
+        args.min_lr = 0.
+    if epoch < args.warmup_epochs:
+        lr = args.lr * epoch / args.warmup_epochs
+    else:
+        lr = args.lr
+        if args.schedule in ['cos', 'cosine']:  # cosine lr schedule
+            # lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs)) # without warmup
+            lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
+                (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
+        elif args.schedule in ['step', 'stepwise']:  # stepwise lr schedule
+            for milestone in args.lr_drop:
+                lr *= 0.1 if epoch >= int(milestone * args.epochs) else 1.
     for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+        if "lr_scale" in param_group:
+            param_group["lr"] = lr * param_group["lr_scale"]
+        else:
+            param_group["lr"] = lr
+    return lr
 
 
 def load_checkpoint(ckptpath, model, optimizer, args=None):

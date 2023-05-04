@@ -10,10 +10,10 @@ def init_distributed_mode(args):
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ and 'SLURM_NTASKS' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.world_size = int(os.environ['SLURM_NTASKS'])
-        args.gpu = args.rank % torch.cuda.device_count()
+    # elif 'SLURM_PROCID' in os.environ and 'SLURM_NTASKS' in os.environ:
+    #     args.rank = int(os.environ['SLURM_PROCID'])
+    #     args.world_size = int(os.environ['SLURM_NTASKS'])
+    #     args.gpu = args.rank % torch.cuda.device_count()
     else: # for multiprocessing_distributed
         if args.rank == -1:
             args.rank = 0 # it is node rank for multiprocessing_distributed

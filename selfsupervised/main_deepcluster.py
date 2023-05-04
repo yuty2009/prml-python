@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.torchutils as utils
-from sslutils import *
+from selfsupervised.engine_ssl import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -38,7 +38,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -52,6 +52,10 @@ parser.add_argument('--optimizer', default='sgd', type=str,
                     help='optimizer used to learn the model')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
+                    help='lower lr bound for cyclic schedulers that hit 0')
+parser.add_argument('--warmup_epochs', type=int, default=10, metavar='N',
+                    help='epochs to warmup LR')
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')

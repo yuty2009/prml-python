@@ -9,6 +9,7 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
+import ntxent
 import moco, simclr, swav, byol, simsiam, dino
 
 
@@ -21,13 +22,18 @@ class LinearClassifier(nn.Module):
         if freeze_feature: # freeze all layers but the last fc
             for param in self.encoder.parameters():
                 param.requires_grad = False
+        # load pretrained model
+        self.load_pretrained(pretrained)
         # classifier
         self.fc = nn.Linear(n_features, num_classes)
+        torch.nn.init.trunc_normal_(self.fc.weight, std=2e-5)
+
+    def load_pretrained(self, pretrained):
         if pretrained and os.path.isfile(pretrained):
             checkpoint = torch.load(pretrained, map_location='cpu')
             state_dict = utils.convert_state_dict(checkpoint['state_dict'])
             msg = self.load_state_dict(state_dict, strict=False)
-            assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+            # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
             print("=> loaded pre-trained model '{}'".format(pretrained))
         else:
             print("=> no checkpoint found at '{}'".format(pretrained))
@@ -53,14 +59,14 @@ class KNNClassifier(nn.Module):
         self.x_train = None
         self.y_train = None
 
-    def set_trainset(self, x_train, y_train):
+    def fit(self, x_train, y_train):
         self.x_train = x_train
         self.y_train = y_train
     
     def forward(self, x):
-        assert self.x_train is not None and self.y_train is not None, "call set_trainset first"
+        assert self.x_train is not None and self.y_train is not None, "call fit first"
         # compute cos similarity between each feature vector and feature bank ---> [B, N]
-        sim_matrix = torch.mm(x, self.x_train)
+        sim_matrix = torch.mm(x, self.x_train.t().contiguous())
         # [B, K]
         sim_weight, sim_indices = sim_matrix.topk(k=self.knn_k, dim=-1)
         # [B, K]
@@ -74,28 +80,6 @@ class KNNClassifier(nn.Module):
         pred_scores = torch.sum(one_hot_label.view(x.size(0), -1, self.num_classes) * sim_weight.unsqueeze(dim=-1), dim=1)
         pred_labels = pred_scores.argsort(dim=-1, descending=True)
         return pred_labels
-
-
-class NT_Xent(nn.Module):
-    def __init__(self, temperature=0.5):
-        super(NT_Xent, self).__init__()
-        self.temperature = temperature
-
-    def forward(self, z_i, z_j):
-        N = z_i.shape[0]
-        # [2*B, D]
-        out = torch.cat([z_i, z_j], dim=0)
-        # [2*B, 2*B]
-        sim_matrix = torch.exp(torch.mm(out, out.t().contiguous()) / self.temperature)
-        mask = (torch.ones_like(sim_matrix) - torch.eye(2 * N, device=sim_matrix.device)).bool()
-        # [2*B, 2*B-1]
-        sim_matrix = sim_matrix.masked_select(mask).view(2 * N, -1)
-        # compute loss
-        pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / self.temperature)
-        # [2*B]
-        pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
-        loss = (- torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
-        return loss
 
 
 def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
@@ -168,11 +152,9 @@ def evaluate_ssl(memory_loader, test_loader, model, epoch, args):
             feature = model(data.to(args.device))
             feature = torch.nn.functional.normalize(feature, dim=1)
             feature_bank.append(feature)
-        # [D, N]
-        feature_bank = torch.cat(feature_bank, dim=0).t().contiguous()
-        # [N]
+        feature_bank = torch.cat(feature_bank)
         feature_labels = torch.tensor(memory_loader.dataset.targets, device=feature_bank.device)
-        knn.set_trainset(feature_bank, feature_labels)
+        knn.fit(feature_bank, feature_labels)
         # loop test data to predict the label by weighted knn search
         test_bar = tqdm.tqdm(test_loader) if show_bar else test_loader
         for data, target in test_bar:
@@ -220,8 +202,8 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.hidden_dim = 128
         args.use_bn = False
         args.queue_size = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.momentum = 0.99 # 0.99 for cifar10
-        args.symmetric = False
+        args.momentum = 0.9 # 0.9 for cifar10
+        args.symmetric = True
         args.schedule = 'cos'
         args.temperature = 0.07 # 0.1 for cifar10
         model = moco.MoCo(
@@ -235,7 +217,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
             momentum = args.momentum, 
             symetric = args.symmetric,
         )
-        criterion = moco.NTXentLossWithQueue(args.temperature)
+        criterion = ntxent.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
         args.lr = 6e-2 # 6e-2 for cifar10
@@ -245,8 +227,8 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.hidden_dim = 128
         args.use_bn = False
         args.queue_size = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.momentum = 0.99 # 0.99 for cifar10
-        args.symmetric = False
+        args.momentum = 0.9 # 0.9 for cifar10
+        args.symmetric = True
         args.schedule = 'cos'
         args.temperature = 0.1 # 0.1 for cifar10
         model = moco.MoCo(
@@ -258,9 +240,9 @@ def get_ssl_model_and_criterion(base_encoder, args):
             use_bn = args.use_bn,
             queue_size = args.queue_size,
             momentum = args.momentum, 
-            symetric = args.symmetric,
+            symmetric = args.symmetric,
         )
-        criterion = moco.NTXentLossWithQueue(args.temperature)
+        criterion = ntxent.NTXentLossWithQueue(args.temperature)
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
         args.lr = 1e-3 # 1e-3 for cifar10
@@ -278,11 +260,11 @@ def get_ssl_model_and_criterion(base_encoder, args):
             hidden_dim = args.hidden_dim,
             use_bn = args.use_bn,
         )
-        criterion = simclr.NTXentLoss(args.temperature)
+        criterion = ntxent.NTXentLoss(args.temperature)
 
     elif str.lower(args.ssl) in ['swav']:
-        args.lr = 1e-3 # 1e-3 for cifar10
-        args.weight_decay = 1e-6 # 1e-6 for cifar10
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.n_mlplayers = 2
         args.hidden_dim = 128
@@ -295,6 +277,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
             n_mlplayers = args.n_mlplayers,
             hidden_dim = args.hidden_dim,
             use_bn = args.use_bn,
+            n_prototypes = 30, # 30 for cifar10, 3000 for imagenet-1k
         )
         criterion = swav.SwAVLoss(2, args.temperature)
 
@@ -339,12 +322,14 @@ def get_ssl_model_and_criterion(base_encoder, args):
         criterion = nn.CosineSimilarity(dim=1)
 
     elif str.lower(args.ssl) in ['dino']:
+        args.lr = 6e-2 # 1e-3 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
         args.n_mlplayers = 3
-        args.hidden_dim = 512
-        args.bottleneck_dim = 512
+        args.hidden_dim = 128
+        args.bottleneck_dim = 256
         args.use_bn = False
-        args.momentum = 0.9
+        args.momentum = 0.996
         model = dino.DINO(
             encoder = base_encoder, 
             encoder_dim = args.encoder_dim, 

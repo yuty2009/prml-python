@@ -17,7 +17,7 @@ import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
 from augment import *
-from sslutils import *
+from selfsupervised.engine_ssl import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -54,6 +54,10 @@ parser.add_argument('--optimizer', default='sgd', type=str,
                     help='optimizer used to learn the model')
 parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
+                    help='lower lr bound for cyclic schedulers that hit 0')
+parser.add_argument('--warmup_epochs', type=int, default=10, metavar='N',
+                    help='epochs to warmup LR')
 parser.add_argument('--schedule', default='step', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')

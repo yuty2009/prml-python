@@ -1,7 +1,7 @@
 # Refer to https://github.com/facebookresearch/swav/
-import numpy as np
 import torch
 import torch.nn as nn
+from head import MLPHead
 
 
 class SwAV(nn.Module):
@@ -27,31 +27,11 @@ class SwAV(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        n_mlplayers = max(n_mlplayers, 1)
-        activation = nn.ReLU(inplace=True)
-        if n_mlplayers == 1:
-            self.projector = nn.Linear(encoder_dim, feature_dim)
-        else:
-            if not use_bn:
-                layers = [nn.Linear(encoder_dim, hidden_dim)]
-            else:
-                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
-                layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(activation)
-            for _ in range(n_mlplayers - 2):
-                if not use_bn:
-                    layers.append(nn.Linear(hidden_dim, hidden_dim))
-                else:
-                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
-                    layers.append(nn.BatchNorm1d(hidden_dim))
-                layers.append(activation)
-            # output layer
-            if not use_bn:
-                layers.append(nn.Linear(hidden_dim, feature_dim))
-            else:
-                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
-                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
-            self.projector = nn.Sequential(*layers)
+        self.projector = MLPHead(
+            in_dim=encoder_dim, out_dim=feature_dim, n_layers=n_mlplayers,
+            hidden_dims=[hidden_dim]*(n_mlplayers-1), use_bn=use_bn,
+        )
+        
         # prototype layer
         self.prototypes = None
         if isinstance(n_prototypes, list):

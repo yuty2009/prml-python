@@ -4,6 +4,8 @@
 import copy
 import torch
 import torch.nn as nn
+import common.distributed as dist
+from head import MLPHead
 
 
 class MoCo(nn.Module):
@@ -34,33 +36,10 @@ class MoCo(nn.Module):
         # create the online encoder
         self.encoder = encoder
         # create the online projector
-        activation = nn.ReLU(inplace=True)
-        if n_mlplayers < 1:
-            self.projector = nn.Identity()
-            feature_dim = encoder_dim
-        if n_mlplayers == 1:
-            self.projector = nn.Linear(encoder_dim, feature_dim)
-        else:
-            if not use_bn:
-                layers = [nn.Linear(encoder_dim, hidden_dim)]
-            else:
-                layers = [nn.Linear(encoder_dim, hidden_dim, bias=False)]
-                layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(activation)
-            for _ in range(n_mlplayers - 2):
-                if not use_bn:
-                    layers.append(nn.Linear(hidden_dim, hidden_dim))
-                else:
-                    layers.append(nn.Linear(hidden_dim, hidden_dim, bias=False))
-                    layers.append(nn.BatchNorm1d(hidden_dim))
-                layers.append(activation)
-            # output layer
-            if not use_bn:
-                layers.append(nn.Linear(hidden_dim, feature_dim))
-            else:
-                layers.append(nn.Linear(hidden_dim, feature_dim, bias=False))
-                layers.append(nn.BatchNorm1d(feature_dim, affine=False))
-            self.projector = nn.Sequential(*layers)
+        self.projector = MLPHead(
+            in_dim=encoder_dim, out_dim=feature_dim, n_layers=n_mlplayers,
+            hidden_dims=[hidden_dim]*(n_mlplayers-1), use_bn=use_bn,
+        )
 
         self.model = nn.Sequential(self.encoder, self.projector)
         self.model_momentum = copy.deepcopy(self.model)
@@ -83,7 +62,7 @@ class MoCo(nn.Module):
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
         # gather keys before updating queue
-        keys = concat_all_gather(keys)
+        keys = dist.all_gather(keys)
 
         batch_size = keys.shape[0]
 
@@ -104,7 +83,7 @@ class MoCo(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
-        x_gather = concat_all_gather(x)
+        x_gather = dist.all_gather(x)
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -132,7 +111,7 @@ class MoCo(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
-        x_gather = concat_all_gather(x)
+        x_gather = dist.all_gather(x)
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -180,39 +159,3 @@ class MoCo(nn.Module):
             # undo shuffle
             # k = self._batch_unshuffle_ddp(k, idx_unshuffle)
         return q, k
-
-
-class NTXentLossWithQueue(nn.Module):
-    def __init__(self, temperature=0.5):
-        super(NTXentLossWithQueue, self).__init__()
-        self.temperature = temperature
-
-    def forward(self, q, k, queue):
-        # compute logits
-        # positive logits: Nx1
-        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
-        # negative logits: NxK
-        l_neg = torch.einsum('nc,ck->nk', [q, queue.clone().detach()])
-        # logits: Nx(1+K)
-        logits = torch.cat([l_pos, l_neg], dim=1)
-        # apply temperature
-        logits /= self.temperature
-        # labels: positive key indicators
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
-        loss = nn.functional.cross_entropy(logits, labels)
-        return loss
-
-
-# utils
-@torch.no_grad()
-def concat_all_gather(tensor):
-    """
-    Performs all_gather operation on the provided tensors.
-    *** Warning ***: torch.distributed.all_gather has no gradient.
-    """
-    tensors_gather = [torch.ones_like(tensor)
-        for _ in range(torch.distributed.get_world_size())]
-    torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
-
-    output = torch.cat(tensors_gather, dim=0)
-    return output
