@@ -32,14 +32,14 @@ class MnistBags(data_utils.Dataset):
 
     def _form_bags(self):
         if self.train:
-            train_loader = data_utils.DataLoader(datasets.MNIST(self.root,
-                                                                train=True,
-                                                                download=True,
-                                                                transform=transforms.Compose([
-                                                                         transforms.ToTensor(),
-                                                                         transforms.Normalize((0.1307,), (0.3081,))])),
-                                                 batch_size=self.num_in_train,
-                                                 shuffle=False)
+            train_loader = data_utils.DataLoader(
+                datasets.MNIST(
+                    self.root, train=True, download=True,
+                    transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+                ),
+                batch_size=self.num_in_train,
+                shuffle=False
+            )
 
             bags_list = []
             labels_list = []
@@ -51,7 +51,7 @@ class MnistBags(data_utils.Dataset):
                 labels = batch_data[1]
 
             while valid_bags_counter < self.num_bag:
-                bag_length = np.int(self.r.normal(self.mean_bag_length, self.var_bag_length, 1))
+                bag_length = int(self.r.normal(self.mean_bag_length, self.var_bag_length, 1))
                 if bag_length < 1:
                     bag_length = 1
                 indices = torch.LongTensor(self.r.randint(0, self.num_in_train, bag_length))
@@ -84,14 +84,14 @@ class MnistBags(data_utils.Dataset):
                     pass
 
         else:
-            test_loader = data_utils.DataLoader(datasets.MNIST(self.root,
-                                                               train=False,
-                                                               download=True,
-                                                               transform=transforms.Compose([
-                                                                    transforms.ToTensor(),
-                                                                    transforms.Normalize((0.1307,), (0.3081,))])),
-                                                batch_size=self.num_in_test,
-                                                shuffle=False)
+            test_loader = data_utils.DataLoader(
+                datasets.MNIST(
+                    self.root, train=False, download=True,
+                    transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+                ),
+                batch_size=self.num_in_test,
+                shuffle=False
+            )
 
             bags_list = []
             labels_list = []
@@ -103,7 +103,7 @@ class MnistBags(data_utils.Dataset):
                 labels = batch_data[1]
 
             while valid_bags_counter < self.num_bag:
-                bag_length = np.int(self.r.normal(self.mean_bag_length, self.var_bag_length, 1))
+                bag_length = int(self.r.normal(self.mean_bag_length, self.var_bag_length, 1))
                 if bag_length < 1:
                     bag_length = 1
                 indices = torch.LongTensor(self.r.randint(0, self.num_in_test, bag_length))
@@ -208,3 +208,4 @@ if __name__ == "__main__":
     print('number of bags with 9(s): ', mnist_bags_test)
     print('total number of bags', len(test_loader))
     print(np.mean(len_bag_list), np.min(len_bag_list), np.max(len_bag_list))
+    
