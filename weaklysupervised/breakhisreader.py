@@ -93,12 +93,12 @@ if __name__ == '__main__':
     from PIL import Image
     
     root = 'f:/medicalimages/breakhis'
-    tf_crop = transforms.CenterCrop((448, 700))
+    tf_resize = transforms.CenterCrop((448, 700))
     tf_train = transforms.Compose([
         transforms.ToTensor()
     ])
     # dataset = torchvision.datasets.ImageFolder(root, transform)
-    dataset = BREAKHISPatchDataset(root, split='test', patch_size=28, transform=tf_crop, transform_patch=tf_train)
+    dataset = BREAKHISPatchDataset(root, split='test', patch_size=28, transform=tf_resize, transform_patch=tf_train)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
     for i, (x, y) in enumerate(dataloader):
         print(x.shape, y.shape)

@@ -9,11 +9,12 @@ from PIL import Image
 label2index = {'Normal': 0, 'Benign': 0, 'InSitu': 1, 'Invasive': 1}
 
 class BACHPatchDataset(torch.utils.data.Dataset):
-    def __init__(self, root, split='all', patch_size=124, transform=None):
+    def __init__(self, root, split='all', patch_size=124, transform=None, transform_patch=None):
         self.root = root
         self.test_ratio = 0.2
         self.patch_size = patch_size
         self.transform = transform
+        self.transform_patch = transform_patch
         self.classes = ['Normal', 'Benign', 'InSitu', 'Invasive']
         self.class_to_idx = label2index
         self.imgs = self.make_dataset(split)
@@ -69,18 +70,14 @@ class BACHPatchDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         path, target = self.imgs[index]
         img = Image.open(path)
-        w, h = img.size
-        nw = w // self.patch_size * self.patch_size
-        nh = h // self.patch_size * self.patch_size
-        img = img.resize((nw, nh))
-        img_array = np.asarray(img)
+        img_array = np.array(self.transform(img))
         patches = self.patchify(img_array, patch_size=self.patch_size)
         # patches = patches.transpose(0, 3, 1, 2) # ToTensor() will do this
         if self.transform is not None:
             patches_transformed = []
             for patch in patches:
                 img_patch = Image.fromarray(patch)
-                patch_transformed = self.transform(img_patch)
+                patch_transformed = self.transform_patch(img_patch)
                 patches_transformed.append(patch_transformed)
             patches = torch.stack(patches_transformed)
         return patches, target
@@ -105,11 +102,12 @@ if __name__ == '__main__':
     from PIL import Image
     
     root = 'f:/medicalimages/bach/ICIAR2018_BACH_Challenge/Photos'
-    transform = transforms.Compose([
+    tf_resize = transforms.Resize((1488, 1984)) # transforms.CenterCrop((1488, 1984))
+    tf_train = transforms.Compose([
         transforms.ToTensor()
     ])
     # dataset = torchvision.datasets.ImageFolder(root, transform)
-    dataset = BACHPatchDataset(root, split='test', patch_size=124, transform=transform)
+    dataset = BACHPatchDataset(root, split='test', patch_size=124, transform=tf_resize, transform_patch=tf_train)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
     for i, (x, y) in enumerate(dataloader):
         print(x.shape, y.shape)
