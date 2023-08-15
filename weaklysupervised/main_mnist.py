@@ -9,11 +9,11 @@ import torch.optim as optim
 import torch.utils.data as data_utils
 
 from mnist_bags_loader import MnistBags
-from attnmil import AttnMIL
+from attnmil import AttentionMIL
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
-parser.add_argument('-d', '--root', default='/Users/yuty2009/data/prmldata/mnist',
+parser.add_argument('-d', '--root', default='e:/prmldata/mnist',
                     metavar='PATH', help='path to dataset')
 parser.add_argument('--epochs', type=int, default=20, metavar='N',
                     help='number of epochs to train (default: 20)')
@@ -65,7 +65,7 @@ test_loader = data_utils.DataLoader(MnistBags(args.root,
 
 print('Init Model')
 # CNN feature extractor
-feature_encoder = nn.Sequential(
+encoder = nn.Sequential(
     nn.Conv2d(1, 20, kernel_size=5),
     nn.ReLU(),
     nn.MaxPool2d(2, stride=2),
@@ -73,9 +73,9 @@ feature_encoder = nn.Sequential(
     nn.ReLU(),
     nn.MaxPool2d(2, stride=2)
 )
-feature_dim = 50 * 4 * 4
+encoder.feature_dim = 50 * 4 * 4
 # MIL model
-model = AttnMIL(feature_encoder, feature_dim=feature_dim, num_classes=2)
+model = AttentionMIL(encoder, num_classes=2)
 model = model.to(args.device)
 
 criterion = torch.nn.CrossEntropyLoss()

@@ -4,28 +4,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class AttnMIL(nn.Module):
-    def __init__(self, feature_encoder, feature_dim=800, project_dim=500, attention_dim=128, num_classes=2):
-        super(AttnMIL, self).__init__()
-        self.num_classes = num_classes
-        self.feature_dim = feature_dim
-        self.project_dim = project_dim
-        self.attention_dim = attention_dim
+class AttentionMIL(nn.Module):
+    def __init__(self, feature_encoder, embed_dim=500, attention_dim=128, num_classes=2):
+        super(AttentionMIL, self).__init__()
 
         self.feature_encoder = feature_encoder
+        feature_dim = feature_encoder.feature_dim
 
         self.feature_projector = nn.Sequential(
-            nn.Linear(feature_dim, self.project_dim),
+            nn.Linear(feature_dim, embed_dim),
             nn.ReLU(),
         )
 
         self.attn_pooling = nn.Sequential(
-            nn.Linear(self.project_dim, self.attention_dim),
+            nn.Linear(embed_dim, attention_dim),
             nn.Tanh(),
-            nn.Linear(self.attention_dim, 1)
+            nn.Linear(attention_dim, 1)
         )
 
-        self.classifier = nn.Linear(self.project_dim, num_classes)
+        self.classifier = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x):
         """ 

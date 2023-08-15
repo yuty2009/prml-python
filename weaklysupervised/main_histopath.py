@@ -4,7 +4,6 @@ import json
 import tqdm
 import datetime
 import argparse
-import numpy as np
 
 import torch
 import torch.nn as nn
@@ -15,7 +14,9 @@ import timm.optim.optim_factory as optim_factory
 import common.torchutils as utils
 from breakhisreader import BREAKHISPatchDataset
 from bachreader import BACHPatchDataset
-from attnmil import AttnMIL
+from torchvision.models import resnet18
+from attnmil import AttentionMIL
+from transmil import TransformerMIL
 
 datasets = {
     'breakhis': 'f:/medicalimages/breakhis',
@@ -23,11 +24,10 @@ datasets = {
 }
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='breakhis', choices=datasets.keys())
+parser.add_argument('--dataset', type=str, default='bach', choices=datasets.keys())
 parser.add_argument('--data_dir', type=str, 
                     default='')
 parser.add_argument('--arch', type=str, default='attnmil')
-parser.add_argument('--patch_size', type=int, default=28)
 parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--num_workers', type=int, default=4)
 parser.add_argument('--epochs', type=int, default=100)
@@ -68,9 +68,13 @@ def main():
     args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     tf_train = transforms.Compose([
-        #transforms.RandomHorizontalFlip(),
-        #transforms.RandomVerticalFlip(),
-        #transforms.RandomRotation(90),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomChoice([
+            transforms.RandomRotation(90),
+            transforms.RandomRotation(180),
+            transforms.RandomRotation(270),
+        ]),
         transforms.ToTensor()
     ])
     tf_test = transforms.Compose([
@@ -78,14 +82,18 @@ def main():
     ])
 
     if args.dataset == 'breakhis':
-        tf_resize = transforms.Resize((448, 700)) # transforms.CenterCrop((448, 700))
+        args.image_size = (448, 700)
+        args.patch_size = 28
+        tf_resize = transforms.Resize(args.image_size) # transforms.CenterCrop(args.image_size)
         train_dataset = BREAKHISPatchDataset(
             args.data_dir, split='train', patch_size=args.patch_size, transform=tf_resize, transform_patch=tf_train,
         )
         test_dataset = BREAKHISPatchDataset(
             args.data_dir, split='test', patch_size=args.patch_size, transform=tf_resize, transform_patch=tf_test)
     elif args.dataset == 'bach':
-        tf_resize = transforms.Resize((1488, 1984)) # transforms.CenterCrop((1488, 1984))
+        args.image_size = (1488, 1984)
+        args.patch_size = 124
+        tf_resize = transforms.Resize(args.image_size) # transforms.CenterCrop(args.image_size)
         train_dataset = BACHPatchDataset(
             args.data_dir, split='train', patch_size=args.patch_size, transform=tf_resize, transform_patch=tf_train)
         test_dataset = BACHPatchDataset(
@@ -98,7 +106,18 @@ def main():
 
     print('Init Model')
     # CNN feature extractor
-    feature_encoder = nn.Sequential(
+    encoder = resnet18(pretrained=True)
+    module_list = []
+    for name, module in encoder.named_children():
+        if isinstance(module, nn.Linear):
+            feature_dim = module.weight.shape[1]
+            module_list.append(nn.Flatten(1))
+            continue
+        module_list.append(module)
+    encoder = nn.Sequential(*module_list)
+    encoder.feature_dim = feature_dim
+    """
+    encoder = nn.Sequential(
         nn.Conv2d(3, 20, kernel_size=5),
         nn.ReLU(),
         nn.MaxPool2d(2, stride=2),
@@ -106,11 +125,13 @@ def main():
         nn.ReLU(),
         nn.MaxPool2d(2, stride=2),
     )
-    feature_dim = 50 * 4 * 4 # for breakhis 28 * 28 patch_size
-    # feature_dim = 50 * 28 * 28 # for bach 124 * 124 patch_size
-    # feature_dim = 100 * 4 * 4 # for bach 124 * 124 patch_size
+    # encoder.feature_dim = 50 * 4 * 4 # for breakhis 28 * 28 patch_size
+    encoder.feature_dim = 50 * 28 * 28 # for bach 124 * 124 patch_size
+    # encoder.feature_dim = 100 * 4 * 4 # for bach 124 * 124 patch_size
+    """
+    encoder.num_patches = int((args.image_size[0] // args.patch_size) * (args.image_size[1] // args.patch_size))
     # MIL model
-    model = AttnMIL(feature_encoder, feature_dim=feature_dim, num_classes=2)
+    model = TransformerMIL(encoder, num_classes=2)
     model = model.to(args.device)
 
     criterion = nn.CrossEntropyLoss()

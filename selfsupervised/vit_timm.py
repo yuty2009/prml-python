@@ -8,15 +8,16 @@ def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
 class ViT(nn.Module):
-    def __init__(self, image_size=224, patch_size=16, in_chans=3, num_classes=0, 
+    def __init__(self, num_classes=0, input_size=224, patch_size=16, in_chans=3, 
                  embed_dim=768, num_layers=12, num_heads=12, mlp_ratio=4.,
-                 drop_rate=0., attn_drop_rate=0., norm_layer=nn.LayerNorm,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
                  pool = 'cls'):
         super().__init__()
         self.in_chans = in_chans
         self.embed_dim = embed_dim
+        self.input_size = pair(input_size)
         
-        ih, iw = pair(image_size)
+        ih, iw = pair(input_size)
         ph, pw = pair(patch_size)
         assert ih % ph == 0 and iw % pw == 0, \
                'Image dimensions must be divisible by the patch size.'
@@ -37,9 +38,10 @@ class ViT(nn.Module):
         self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(drop_rate)
         # transformer blocks
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_layers)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
             Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True,
-                  drop=drop_rate, attn_drop=attn_drop_rate, norm_layer=norm_layer)
+                  drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
             for i in range(num_layers)])
         self.norm = norm_layer(embed_dim)
         # classfier head
@@ -65,6 +67,10 @@ class ViT(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'dist_token'}
+
     def forward(self, img, mask=None, keep_mask=False):
         # img: (bs, c, h, w)
         # mask: (bs, len_keep) shuffled mask ids or (bs, num_patches) mask
@@ -74,7 +80,9 @@ class ViT(nn.Module):
         # mask patches
         if mask is not None:
             if not keep_mask:
-                x = torch.gather(x, dim=1, index=mask.unsqueeze(-1).repeat(1, 1, x.size(-1)))
+                # x = torch.gather(x, dim=1, index=mask.unsqueeze(-1).repeat(1, 1, x.size(-1)))
+                ids_keep = (1-mask).nonzero(as_tuple=False)
+                x = x[ids_keep[:, 0], ids_keep[:, 1], :].reshape(x.size(0), -1, x.size(-1))
             else:
                 mask_token = self.mask_token.expand(x.size(0), x.size(1), -1)
                 w = mask.flatten(1).unsqueeze(-1).type_as(mask_token)
@@ -91,8 +99,8 @@ class ViT(nn.Module):
         elif self.pool == 'cls':
             x = self.norm(x)
             x = x[:, 0] # cls token
-        else: # return all tokens
-            x = x[:, 1:, :]
+        else:
+            x = self.norm(x)
         out = self.head(x)
         return out
     
@@ -100,7 +108,7 @@ class ViT(nn.Module):
 if __name__ == '__main__':
 
     model = ViT(
-        image_size = (256, 256),
+        input_size = (256, 256),
         patch_size = (16, 16),
         num_classes = 1000,
         embed_dim = 768,
@@ -112,3 +120,4 @@ if __name__ == '__main__':
     x = torch.randn((2, 3, 256, 256))
     output = model(x)
     print(output.shape)
+    
