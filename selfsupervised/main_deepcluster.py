@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.torchutils as utils
-from selfsupervised.engine_ssl import *
+from engine_ssl import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -193,7 +193,7 @@ def main(args):
         train_loss = train_epoch(train_loader, model, criterion, optimizer, epoch, args)
         # evaluate for one epoch
         real_model = model.module if args.ngpus > 1 else model
-        test_accu1, test_accu5 = evaluate_ssl(memory_loader, test_loader, real_model.encoder, epoch, args)
+        test_accu1, test_accu5 = evaluate_cl(memory_loader, test_loader, real_model.encoder, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             utils.save_checkpoint({

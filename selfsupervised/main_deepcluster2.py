@@ -17,7 +17,7 @@ import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
 from augment import *
-from selfsupervised.engine_ssl import *
+from engine_ssl import *
 
 
 model_names = sorted(name for name in models.__dict__
@@ -236,7 +236,7 @@ def main(gpu, args):
             mb_index, mb_embeddings, assignments)
         # evaluate for one epoch
         real_model = model.module if args.ngpus > 1 else model
-        test_accu1, test_accu5 = evaluate_ssl(memory_loader, test_loader, real_model.encoder, epoch, args)
+        test_accu1, test_accu5 = evaluate_cl(memory_loader, test_loader, real_model.encoder, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:

@@ -9,14 +9,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
-import torchvision.models as models
 import torchvision.datasets as datasets
 from torch.utils.tensorboard import SummaryWriter
+import timm.optim.optim_factory as optim_factory
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import augment
 import common.distributed as dist
 import common.torchutils as utils
+import lr_decay as lrd
 from engine_ssl import *
 from models.vit import ViT
 
@@ -36,11 +37,7 @@ image_datasets = {
     }
 }
 
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
-
-parser = argparse.ArgumentParser(description='Self-supervised Learning Benchmarks')
+parser = argparse.ArgumentParser(description='MAE Pretraining')
 parser.add_argument('-D', '--dataset', default='cifar10', metavar='PATH',
                     help='dataset used')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='vit',
@@ -48,10 +45,12 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='vit',
 parser.add_argument('--pretrained', 
                     default='e:/prmldata/cifar10/output/mae_vit/session_20230413145313/checkpoint/chkpt_0800.pth.tar',
                     metavar='PATH', help='path to pretrained model (default: none)')
+parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
+                    help='Drop path rate (default: 0.1)')
 parser.add_argument('--global_pool', action='store_true', default=False)
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -63,16 +62,22 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--schedule', default='step', type=str,
+parser.add_argument('--layer_decay', type=float, default=0.75,
+                    help='layer-wise lr decay from ELECTRA/BEiT')
+parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
+                    help='lower lr bound for cyclic schedulers that hit 0')
+parser.add_argument('--warmup_epochs', type=int, default=10, metavar='N',
+                    help='epochs to warmup LR')
+parser.add_argument('--schedule', default='cos', type=str,
                     choices=['cos', 'step'],
                     help='learning rate schedule (how to change lr)')
 parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+parser.add_argument('--wd', '--weight-decay', default=5e-2, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), type=tuple,
@@ -178,28 +183,31 @@ def main(gpu, args):
         num_workers=args.workers, pin_memory=True)
 
     # create model
-    print("=> creating model '{}'".format(args.arch))
-    if args.arch in models.__dict__.keys():
-        base_encoder = models.__dict__[args.arch]()
-        base_encoder = get_base_encoder(base_encoder, args)
-    elif args.arch == 'vit':
-        base_encoder = ViT(
-            input_size = args.image_size,
-            patch_size = 4,
-            in_chans = 3,
-            num_classes = 0, # make the classifier head to be nn.Identity()
-            embed_dim = 384,
-            num_layers = 6,
-            num_heads = 8,
-            mlp_ratio = 4,
-            pool='mean' if args.global_pool else 'cls',
-        )
-    model = LinearClassifier(base_encoder, args.num_classes, freeze_encoder=True)
-
+    args.encoder_dim = 384
+    print("=> creating ViT model")
+    base_encoder = ViT(
+        input_size = args.image_size,
+        patch_size = 4,
+        in_chans = 3,
+        num_classes = 0, # make the classifier head to be nn.Identity()
+        embed_dim = args.encoder_dim,
+        num_layers = 6,
+        num_heads = 8,
+        mlp_ratio = 4,
+        pool='mean' if args.global_pool else 'cls',
+    )
+    model = LinearClassifier(
+        base_encoder, args.num_classes, freeze_encoder=False)
+    
     model = model.to(args.device)
-    # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(args.device)
-    optimizer = get_optimizer(model, args)
+    # build optimizer with layer-wise lr decay (lrd)
+    # param_groups = lrd.param_groups_lrd(model, args.weight_decay,
+    #     no_weight_decay_list=model.encoder.no_weight_decay(),
+    #     layer_decay=args.layer_decay
+    # )
+    param_groups = optim_factory.param_groups_weight_decay(model, args.weight_decay)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
 
     if args.pretrained:
         utils.load_checkpoint(args.pretrained, model, strict=False) # for contrastive pretraining
@@ -264,7 +272,7 @@ if __name__ == '__main__':
     args.data_dir = image_datasets[args.dataset]['data_dir']
     args.output_dir = image_datasets[args.dataset]['output_dir']
 
-    output_prefix = f"eval_{args.arch}"
+    output_prefix = f"ft_{args.arch}"
     output_prefix += "/session_" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     if not hasattr(args, 'output_dir'):
         args.output_dir = args.data_dir

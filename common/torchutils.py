@@ -111,13 +111,29 @@ def adjust_learning_rate(optimizer, epoch, args):
     return lr
 
 
-def load_checkpoint(ckptpath, model, optimizer, args=None):
+def change_learning_rate(optimizer, lr):
+    """ Set the learning rate to a fixed value """
+    for param_group in optimizer.param_groups:
+        if "lr_scale" in param_group:
+            param_group["lr"] = lr * param_group["lr_scale"]
+        else:
+            param_group["lr"] = lr
+    return lr
+
+
+def load_checkpoint(ckptpath, model, optimizer=None, args=None, strict=False):
     if os.path.isfile(ckptpath):
         checkpoint = torch.load(ckptpath, map_location='cpu')
         state_dict = convert_state_dict(checkpoint['state_dict'])
-        model.load_state_dict(state_dict)
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        if args is not None: 
+        msg = model.load_state_dict(state_dict, strict=strict)
+        print(msg.missing_keys)
+        if optimizer is not None and 'optimizer' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(args.device)
+        if args is not None:
             args.start_epoch = 0
             if 'epoch' in checkpoint:
                 args.start_epoch = checkpoint['epoch']

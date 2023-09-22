@@ -5,14 +5,14 @@ import torch.nn.functional as F
 
 
 class AttentionMIL(nn.Module):
-    def __init__(self, feature_encoder, embed_dim=500, attention_dim=128, num_classes=2):
+    def __init__(self, encoder, num_classes=2, embed_dim=500, attention_dim=128):
         super(AttentionMIL, self).__init__()
 
-        self.feature_encoder = feature_encoder
-        feature_dim = feature_encoder.feature_dim
+        self.encoder = encoder
+        encoder_dim = encoder.feature_dim
 
         self.feature_projector = nn.Sequential(
-            nn.Linear(feature_dim, embed_dim),
+            nn.Linear(encoder_dim, embed_dim),
             nn.ReLU(),
         )
 
@@ -31,7 +31,7 @@ class AttentionMIL(nn.Module):
         inshape = x.shape
         x = x.view(-1, *inshape[2:])
 
-        x = self.feature_encoder(x)
+        x = self.encoder(x)
         x = x.view(x.size(0), -1)
         x = self.feature_projector(x)  # B*N x P
 

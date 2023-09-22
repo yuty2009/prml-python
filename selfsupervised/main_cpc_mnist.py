@@ -6,7 +6,7 @@ import torch
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 from mnistseq import MNISTSeqSet
-from cpc import CPC, CPCLoss, CNNEncoder
+from .models.cpc import CPC, CPCLoss, CNNEncoder
 
 
 datapath = '/Users/yuty2009/data/prmldata/mnist/MNIST/raw'

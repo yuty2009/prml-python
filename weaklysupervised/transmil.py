@@ -8,24 +8,23 @@ from modules import TransformerEncoder
 
 
 class TransformerMIL(nn.Module):
-    def __init__(self, feature_encoder,
+    def __init__(self, encoder, num_classes=2,
                  embed_dim=192, num_heads=6, num_layers=1, mlp_ratio=4,
-                 norm_layer=nn.LayerNorm, dropout_transformer=0.1,
-                 num_classes=2):
+                 norm_layer=nn.LayerNorm, dropout_transformer=0.1):
         super(TransformerMIL, self).__init__()
 
-        self.feature_encoder = feature_encoder
-        feature_dim = feature_encoder.feature_dim
-        num_patches = feature_encoder.num_patches
+        self.encoder = encoder
+        encoder_dim = encoder.feature_dim
+        num_patches = encoder.num_patches
 
         self.feature_projector = nn.Sequential(
-            nn.Linear(feature_dim, embed_dim),
+            nn.Linear(encoder_dim, embed_dim),
             nn.ReLU(),
         )
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = SinCosPositionalEmbedding1d(embed_dim, num_patches, True)
-        self.encoder = TransformerEncoder(
+        self.seq_encoder = TransformerEncoder(
             TransformerEncoderLayer(
                 embed_dim, num_heads, int(embed_dim*mlp_ratio), dropout=dropout_transformer
             ),
@@ -55,7 +54,7 @@ class TransformerMIL(nn.Module):
         inshape = x.shape
         x = x.view(-1, *inshape[2:])
 
-        x = self.feature_encoder(x)
+        x = self.encoder(x)
         x = x.view(x.size(0), -1)
         x = self.feature_projector(x)  # B*N x P
         x = x.view(inshape[0], inshape[1], -1)  # B x N x P
@@ -66,7 +65,7 @@ class TransformerMIL(nn.Module):
         # add pos embed w/o cls token
         x = self.pos_embed(x)
         # apply Transformer blocks
-        xs, attn_ws = self.encoder(x)
+        xs, attn_ws = self.seq_encoder(x)
 
         x = xs[-1] # last layer output
         attn_w = attn_ws[-1] # last layer attention weights

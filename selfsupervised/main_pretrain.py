@@ -9,37 +9,55 @@ import numpy as np
 
 import torch
 import torch.multiprocessing as mp
-import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
+import timm.optim.optim_factory as optim_factory
 
 import sys; sys.path.append(os.path.dirname(__file__)+"/../")
 import common.distributed as dist
 import common.torchutils as utils
-from selfsupervised.engine_ssl import *
-from vit_timm import ViT
+from engine_ssl import *
+from models.vit import ViT
+from models.mae import MAE
+from models.simmim import SimMIM
+from models.mbyol import MBYOL
+from models.mdino import MDINO
 
 
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+image_datasets = {
+    'cifar10' : {
+        'data_dir' : '/home/yuty2009/data/prmldata/cifar10/',
+        'output_dir' : '/home/yuty2009/data/prmldata/cifar10/output/',
+    },
+    'stl10' : {
+        'data_dir' : 'e:/prmldata/stl10/',
+        'output_dir' : 'e:/prmldata/stl10/output/',
+    },
+    'imagenet' : {
+        'data_dir' : '/home/yuty2009/data/prmldata/imagenet/',
+        'output_dir' : '/home/yuty2009/data/prmldata/imagenet/output/',
+    }
+}
 
-parser = argparse.ArgumentParser(description='Self-Supervised Learning Benchmarks')
-parser.add_argument('--ssl', default='dino', type=str,
-                    help='self-supervised learning approach used')
-parser.add_argument('-D', '--dataset', default='CIFAR10', metavar='PATH',
+parser = argparse.ArgumentParser(description='Self-supervised Pretraining')
+parser.add_argument('-D', '--dataset', default='cifar10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('-d', '--data-dir', default='/home/yuty2009/data/cifar10',
-                    metavar='PATH', help='path to dataset')
-parser.add_argument('-o', '--output-dir', default='/home/yuty2009/data/cifar10/output',
-                    metavar='PATH', help='path where to save, empty for no saving')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='vit',
-                    choices=model_names,
-                    help='model architecture: ' +
-                        ' | '.join(model_names) +
-                        ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+parser.add_argument('--ssl', default='simmim', type=str,
+                    help='self-supervised learning approach used')
+parser.add_argument('-p', '--patch-size', default=4, type=int, metavar='N',
+                    help='patch size (default: 16) when dividing the long signal into windows')
+parser.add_argument('--embed_dim', default=384, type=int, metavar='N',
+                    help='embedded feature dimension (default: 192)')
+parser.add_argument('--num_layers', default=6, type=int, metavar='N',
+                    help='number of transformer layers (default: 6)')
+parser.add_argument('--num_heads', default=8, type=int, metavar='N',
+                    help='number of heads for multi-head attention (default: 6)')
+parser.add_argument('--mask_prob', default=0.75, type=float,
+                        help='Masking ratio (percentage of removed patches).')
+parser.add_argument('--norm_pix_loss', action='store_true',
+                        help='Use (per-patch) normalized pixels as targets for computing loss')
+parser.set_defaults(norm_pix_loss=False)
+parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
-parser.add_argument('--global_pool', action='store_true', default=False)
 parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -52,9 +70,9 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
+parser.add_argument('--min_lr', type=float, default=1e-8, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0')
 parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
                     help='epochs to warmup LR')
@@ -65,7 +83,7 @@ parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+parser.add_argument('--wd', '--weight-decay', default=5e-2, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), nargs='*', type=int,
@@ -115,7 +133,7 @@ def main(gpu, args):
 
     # Data loading code
     print("=> loading dataset {} from '{}'".format(args.dataset, args.data_dir))
-    train_dataset, memory_dataset, test_dataset = get_train_dataset(args, evaluate=True)
+    train_dataset, memory_dataset, test_dataset = get_train_dataset(args, constrastive=False, evaluate=True)
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -133,31 +151,89 @@ def main(gpu, args):
         num_workers=args.workers, pin_memory=True)
 
     # create model
-    print("=> creating model '{}'".format(args.arch))
-    if args.arch.startswith('resnet'):
-        base_encoder = models.__dict__[args.arch]()
-        base_encoder = get_base_encoder(base_encoder, args)
-    elif args.arch.startswith('vit'):
-        args.encoder_dim = 384
-        base_encoder = ViT(
-            image_size = args.image_size,
-            patch_size = 4,
-            in_chans = 3,
-            num_classes = 0, # make the classifier head to be nn.Identity()
-            embed_dim = args.encoder_dim,
-            num_layers = 6,
-            num_heads = 8,
-            mlp_ratio = 4,
-            pool='mean' if args.global_pool else 'cls',
-        )
+    print("=> creating MAE model")
+    encoder = ViT(
+        input_size = args.image_size,
+        patch_size = args.patch_size,
+        embed_dim = args.embed_dim,
+        num_layers = args.num_layers,
+        num_heads = args.num_heads,
+        mlp_ratio = 4.0,
+        pool = 'none',
+    )
 
-    model, criterion = get_ssl_model_and_criterion(base_encoder, args)
-    # print(model)
-    optimizer = get_optimizer(model, args)
+    if args.ssl in ['mae', 'MAE']:
+        model = MAE(
+            input_size = args.image_size,
+            patch_size = args.patch_size,
+            mask_prob = args.mask_prob,
+            embed_dim = args.embed_dim,
+            num_layers = args.num_layers,
+            num_heads = args.num_heads,
+            mlp_ratio = 4.0,
+            embed_dim_decoder = args.embed_dim,
+            num_layers_decoder = 2,
+            num_heads_decoder = 6,
+            norm_pix_loss = args.norm_pix_loss
+        )
+    elif args.ssl in ['simmim', 'SimMIM']:
+        model = SimMIM(
+            input_size = args.image_size,
+            patch_size = args.patch_size,
+            mask_prob = args.mask_prob,
+            embed_dim = args.embed_dim,
+            num_layers = args.num_layers,
+            num_heads = args.num_heads,
+            mlp_ratio = 4.0,
+        )
+    elif args.ssl in ['mbyol', 'MBYOL']:
+        model = MBYOL(
+            encoder = encoder,
+            encoder_dim = args.embed_dim,
+            feature_dim = 256,
+            predict_dim = 256,
+            n_mlplayers = 2,
+            hidden_dim = 128,
+            momentum = 0.996,
+            image_size = args.image_size,
+            patch_size = args.patch_size,
+        )
+    elif args.ssl in ['mdino', 'MDINO']:
+        model = MDINO(
+            encoder = encoder,
+            encoder_dim = args.embed_dim,
+            feature_dim = 256,
+            n_mlplayers = 3,
+            hidden_dim = 128,
+            momentum = 0.996,
+            image_size = args.image_size,
+            patch_size = args.patch_size,
+        )
+    else:
+        raise NotImplementedError
+
+    # following timm: set wd as 0 for bias and norm layers
+    # param_groups = optim_factory.add_weight_decay(model, args.weight_decay)
+    param_groups = optim_factory.param_groups_weight_decay(model, args.weight_decay)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
 
     # optionally resume from a checkpoint
-    if hasattr(args, 'resume') and args.resume:
-        utils.load_checkpoint(args.resume, model, optimizer, args)
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume, map_location='cpu')
+            args.start_epoch = checkpoint['epoch']
+            state_dict = utils.convert_state_dict(checkpoint['state_dict'])
+            model.load_state_dict(state_dict)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(args.device)
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
     else:
         print("=> going to train from scratch")
 
@@ -184,16 +260,16 @@ def main(gpu, args):
         lr = optimizer.param_groups[0]["lr"]
 
         # train for one epoch
-        train_loss = train_epoch_ssl(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss = train_epoch(train_loader, model, optimizer, epoch, args)
         # evaluate for one epoch
         real_model = model.module if args.ngpus > 1 else model
-        test_accu1, test_accu5 = evaluate_ssl(memory_loader, test_loader, real_model.encoder, epoch, args)
+        test_accu1, test_accu5 = evaluate(memory_loader, test_loader, real_model, epoch, args)
 
         if args.output_dir and epoch > 0 and (epoch+1) % args.save_freq == 0:
             if not args.distributed or args.rank == 0:
                 utils.save_checkpoint({
                     'epoch': epoch + 1,
-                    'state_dict': real_model.state_dict(),
+                    'state_dict': model.module.state_dict() if args.ngpus > 1 else model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
                     }, epoch + 1,
                     is_best=False,
@@ -209,7 +285,10 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    output_prefix = f"ssl_{args.ssl}_{args.arch}"
+    args.data_dir = image_datasets[args.dataset]['data_dir']
+    args.output_dir = image_datasets[args.dataset]['output_dir']
+
+    output_prefix = f"{args.ssl}_vit"
     output_prefix += "/session_" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     if not hasattr(args, 'output_dir'):
         args.output_dir = args.data_dir

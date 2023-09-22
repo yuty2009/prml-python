@@ -9,34 +9,30 @@ import common.distributed as dist
 import common.torchutils as utils
 import lars
 import augment
-import ntxent
-import moco, simclr, swav, byol, simsiam, dino
+import models.ntxent as ntxent
+from models import moco, simclr, swav, byol, simsiam, dino
 
 
 # implementation follows https://github.com/leftthomas/SimCLR/blob/master/linear.py
 class LinearClassifier(nn.Module):
-    def __init__(self, encoder, num_classes, n_features=2048, pretrained=None, freeze_feature=True):
+    def __init__(self, encoder, num_classes, freeze_encoder=True):
         super(LinearClassifier, self).__init__()
         # encoder
         self.encoder = encoder
-        if freeze_feature: # freeze all layers but the last fc
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-        # load pretrained model
-        self.load_pretrained(pretrained)
+        encoder_dim = encoder.feature_dim
+        if freeze_encoder: # freeze the encoder
+            self.freeze_encoder(True)
         # classifier
-        self.fc = nn.Linear(n_features, num_classes)
+        self.fc = nn.Linear(encoder_dim, num_classes)
         torch.nn.init.trunc_normal_(self.fc.weight, std=2e-5)
 
-    def load_pretrained(self, pretrained):
-        if pretrained and os.path.isfile(pretrained):
-            checkpoint = torch.load(pretrained, map_location='cpu')
-            state_dict = utils.convert_state_dict(checkpoint['state_dict'])
-            msg = self.load_state_dict(state_dict, strict=False)
-            # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
-            print("=> loaded pre-trained model '{}'".format(pretrained))
+    def freeze_encoder(self, freeze=True):
+        if freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
         else:
-            print("=> no checkpoint found at '{}'".format(pretrained))
+            for param in self.encoder.parameters():
+                param.requires_grad = True
 
     def forward(self, x):
         x = self.encoder(x)
@@ -82,7 +78,84 @@ class KNNClassifier(nn.Module):
         return pred_labels
 
 
-def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
+def train_epoch(data_loader, model, optimizer, epoch, args):
+    model.train()
+    total_loss = 0.0
+
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+    data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
+
+    for step, (images, _) in enumerate(data_bar):
+
+        images = images.to(args.device)
+        loss = model(images)[0]
+
+        # compute gradient and do SGD step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        loss = dist.all_reduce(loss)
+        total_loss += loss.item()
+
+        if show_bar:
+            data_bar.set_description(
+                "Train Epoch: [{}/{}] lr: {:.6f} Loss: {:.4f}".format(
+                    epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss / (step+1)))
+
+    return total_loss / len(data_loader)
+
+
+def evaluate(memory_loader, test_loader, model, epoch, args):
+    model.eval()
+
+    num_classes = len(memory_loader.dataset.classes)
+    knn = KNNClassifier(num_classes, args.knn_k, args.knn_t)
+
+    show_bar = False
+    if not hasattr(args, 'distributed') or not args.distributed or \
+       not hasattr(args, 'rank') or args.rank == 0:
+        show_bar = True
+
+    total_top1, total_top5, total_num = 0.0, 0.0, 0
+    with torch.no_grad():
+        # generate feature bank
+        feature_bank, labels_bank = [], []
+        memory_bar = tqdm.tqdm(memory_loader, desc='Feature extracting') if show_bar else memory_loader
+        for data, target in memory_bar:
+            data, target = data.to(args.device), target.to(args.device)
+            feature = model.forward_feature(data)
+            feature = torch.nn.functional.normalize(feature, dim=1)
+            feature_bank.append(feature)
+            labels_bank.append(target)
+        feature_bank = torch.cat(feature_bank)
+        labels_bank = torch.cat(labels_bank)
+        knn.fit(feature_bank, labels_bank)
+        # loop test data to predict the label by weighted knn search
+        test_bar = tqdm.tqdm(test_loader) if show_bar else test_loader
+        for data, target in test_bar:
+            data, target = data.to(args.device), target.to(args.device)
+
+            feature = model.forward_feature(data)
+            feature = torch.nn.functional.normalize(feature, dim=1)
+            pred_labels = knn(feature)
+
+            total_num += data.size(0)
+            total_top1 += torch.sum((pred_labels[:, 0:1] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+            total_top5 += torch.sum((pred_labels[:, 0:5] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+
+            if show_bar:
+                test_bar.set_description(
+                    "Test  Epoch: [{}/{}] Accu@1:{:.2f}% Accu@5:{:.2f}%".format(
+                        epoch, args.epochs, total_top1 / total_num * 100, total_top5 / total_num * 100))
+
+    return total_top1 / total_num * 100, total_top5 / total_num * 100
+
+
+def train_epoch_cl(data_loader, model, criterion, optimizer, epoch, args):
     model.train()
     total_loss = 0.0
 
@@ -97,7 +170,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
         images[0] = images[0].to(args.device)
         images[1] = images[1].to(args.device)
 
-        if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1', 'mocov2', 'moco_v2']:
+        if str.lower(args.ssl) in ['moco', 'mocov1', 'mocov2']:
             if hasattr(args, 'symmetric') and args.symmetric:
                 p1, p2, t1, t2, queue = model(images[0], images[1])
                 loss = 0.5 * (criterion(p1, t1, queue) + criterion(p2, t2, queue))
@@ -133,7 +206,7 @@ def train_epoch_ssl(data_loader, model, criterion, optimizer, epoch, args):
     return total_loss / len(data_loader)
 
 
-def evaluate_ssl(memory_loader, test_loader, model, epoch, args):
+def evaluate_cl(memory_loader, test_loader, model, epoch, args):
     model.eval()
 
     num_classes = len(memory_loader.dataset.classes)
@@ -194,32 +267,7 @@ def get_base_encoder(base_encoder, args):
     
 
 def get_ssl_model_and_criterion(base_encoder, args):
-    if str.lower(args.ssl) in ['moco', 'mocov1', 'moco_v1']:
-        args.lr = 6e-2 # 6e-2 for cifar10
-        args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 512
-        args.n_mlplayers = 0
-        args.hidden_dim = 128
-        args.use_bn = False
-        args.queue_size = 4096 # 4096 for cifar10, 65536 for ImageNet
-        args.momentum = 0.9 # 0.9 for cifar10
-        args.symmetric = True
-        args.schedule = 'cos'
-        args.temperature = 0.07 # 0.1 for cifar10
-        model = moco.MoCo(
-            encoder = base_encoder,
-            encoder_dim = args.encoder_dim,
-            feature_dim = args.feature_dim,
-            n_mlplayers = args.n_mlplayers,
-            hidden_dim = args.hidden_dim,
-            use_bn = args.use_bn,
-            queue_size = args.queue_size,
-            momentum = args.momentum, 
-            symetric = args.symmetric,
-        )
-        criterion = ntxent.NTXentLossWithQueue(args.temperature)
-
-    elif str.lower(args.ssl) in ['mocov2', 'moco_v2']:
+    if str.lower(args.ssl) in ['moco', 'mocov1', 'mocov2']:
         args.lr = 6e-2 # 6e-2 for cifar10
         args.weight_decay = 5e-4 # 5e-4 for cifar10
         args.feature_dim = 512
@@ -370,14 +418,19 @@ def get_optimizer(model, args):
     return optimizer
 
 
-def get_train_dataset(args, evaluate=False):
+def get_train_dataset(args, constrastive=True, evaluate=False):
     if str.lower(args.dataset) in ['cifar10', 'cifar-10']:
         args.image_size = 32
         args.mean_std = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        if not constrastive:
+            tf_train = augment.get_transforms('train', args.image_size, args.mean_std)
+        else:
+            tf_train = augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)
+            )
         train_dataset = datasets.CIFAR10(
             args.data_dir, train=True, download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+            transform=tf_train,
         )
         if evaluate:
             memory_dataset = datasets.CIFAR10(
@@ -392,10 +445,15 @@ def get_train_dataset(args, evaluate=False):
     elif str.lower(args.dataset) in ['stl10', 'stl-10']:
         args.image_size = 96
         args.mean_std = ((0.4409, 0.4279, 0.3868), (0.2309, 0.2262, 0.2237))
+        if not constrastive:
+            tf_train = augment.get_transforms('train', args.image_size, args.mean_std)
+        else:
+            tf_train = augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)
+            )
         train_dataset = datasets.STL10(
             args.data_dir, split="unlabeled", download=True,
-            transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+            transform=tf_train,
         )
         if evaluate:
             memory_dataset = datasets.STL10(
@@ -410,10 +468,15 @@ def get_train_dataset(args, evaluate=False):
     elif str.lower(args.dataset) in ['imagenet', 'imagenet-1k', 'ilsvrc2012']:
         args.image_size = 224
         args.mean_std = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        if not constrastive:
+            tf_train = augment.get_transforms('train', args.image_size, args.mean_std)
+        else:
+            tf_train = augment.TransformContrast(
+                augment.get_transforms('ssl', args.image_size, args.mean_std)
+            )
         train_dataset = datasets.ImageFolder(
             os.path.join(args.data_dir, 'train'),
-            transform=augment.TransformContrast(
-                augment.get_transforms('ssl', args.image_size, args.mean_std)),
+            transform=tf_train,
         )
         if evaluate:
             memory_dataset = datasets.ImageFolder(

@@ -32,7 +32,7 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--num_workers', type=int, default=4)
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--save_freq', type=int, default=50)
-parser.add_argument('--lr', '--learning-rate', default=1e-4, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--min_lr', type=float, default=1e-8, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0')
