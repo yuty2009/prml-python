@@ -10,7 +10,7 @@ from modules import TransformerEncoder
 class TransformerMIL(nn.Module):
     def __init__(self, encoder, num_classes=2,
                  embed_dim=192, num_heads=6, num_layers=1, mlp_ratio=4,
-                 norm_layer=nn.LayerNorm, dropout_transformer=0.1):
+                 norm_layer=nn.LayerNorm, droprate_trans=0.1):
         super(TransformerMIL, self).__init__()
 
         self.encoder = encoder
@@ -26,7 +26,7 @@ class TransformerMIL(nn.Module):
         self.pos_embed = SinCosPositionalEmbedding1d(embed_dim, num_patches, True)
         self.seq_encoder = TransformerEncoder(
             TransformerEncoderLayer(
-                embed_dim, num_heads, int(embed_dim*mlp_ratio), dropout=dropout_transformer
+                embed_dim, num_heads, int(embed_dim*mlp_ratio), dropout=droprate_trans
             ),
             num_layers,
         )
