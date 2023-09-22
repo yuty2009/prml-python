@@ -286,56 +286,117 @@ class MixedConv2d(nn.ModuleDict):
         return x
     
 
-class SKConv(nn.Module):
-    def __init__(self, features, M, G, r, stride=1, L=32):
-        """ Constructor
-        Args:
-            features: input channel dimensionality.
-            M: the number of branchs.
-            G: num of convolution groups.
-            r: the radio for compute d, the length of z.
-            stride: stride, default 1.
-            L: the minimum dim of the vector z in paper, default 32.
-        """
-        super(SKConv, self).__init__()
-        d = max(int(features/r), L)
-        self.M = M
-        self.features = features
+class SKConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding='', dilation=1,
+                 r=16, L=32, **kwargs):
+        super(SKConv1d, self).__init__()
+
+        kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
+        self.M = len(kernel_size)
+        self.features = out_channels
+        d = max(int(out_channels/r), L)
+
         self.convs = nn.ModuleList([])
-        for i in range(M):
+        for k in kernel_size:
             self.convs.append(nn.Sequential(
-                nn.Conv2d(features, features, kernel_size=3+i*2, stride=stride, padding=1+i, groups=G),
-                nn.BatchNorm2d(features),
-                nn.ReLU(inplace=False)
+                Conv1dSamePadding(
+                    in_channels, out_channels, k, stride=stride,
+                    padding=padding, dilation=dilation, **kwargs
+                ),
+                # nn.BatchNorm1d(out_ch),
+                # nn.ReLU(inplace=False),
             ))
-        self.gap = nn.AdaptiveAvgPool2d((1,1))
-        self.fc = nn.Linear(features, d)
+        self.gap = nn.AdaptiveAvgPool1d((1))
+        self.fc = nn.Sequential(
+            nn.Conv1d(out_channels, d, kernel_size=1, stride=1, bias=False),
+            # nn.BatchNorm2d(d),
+            # nn.ReLU(inplace=True)
+        )
         self.fcs = nn.ModuleList([])
-        for i in range(M):
+        for i in range(self.M):
             self.fcs.append(
-                nn.Linear(d, features)
+                nn.Linear(d, self.features)
             )
         self.softmax = nn.Softmax(dim=1)
         
     def forward(self, x):
-        for i, conv in enumerate(self.convs):
-            fea = conv(x).unsqueeze_(dim=1)
-            if i == 0:
-                feas = fea
-            else:
-                feas = torch.cat([feas, fea], dim=1)
-        fea_U = torch.sum(feas, dim=1)
-        fea_s = self.gap(fea_U).squeeze_()
-        fea_z = self.fc(fea_s)
-        for i, fc in enumerate(self.fcs):
-            vector = fc(fea_z).unsqueeze_(dim=1)
-            if i == 0:
-                attention_vectors = vector
-            else:
-                attention_vectors = torch.cat([attention_vectors, vector], dim=1)
+        
+        batch_size = x.shape[0]
+        
+        feats = [conv(x) for conv in self.convs]      
+        feats = torch.cat(feats, dim=1)
+        feats = feats.view(batch_size, self.M, self.features, feats.shape[-1])
+        
+        feats_U = torch.sum(feats, dim=1)
+        feats_S = self.gap(feats_U)
+        feats_Z = self.fc(feats_S)
+        feats_Z = feats_Z.flatten(1)
+
+        attention_vectors = [fc(feats_Z).unsqueeze_(dim=1) for fc in self.fcs]
+        attention_vectors = torch.cat(attention_vectors, dim=1)
+        attention_vectors = self.softmax(attention_vectors)
+        attention_vectors = attention_vectors.unsqueeze(-1)
+
+        fea_v = (feats * attention_vectors).sum(dim=1)
+
+        return fea_v
+
+
+class SKConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding='', dilation=1,
+                 r=16, L=32, **kwargs):
+        super(SKConv2d, self).__init__()
+
+        kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
+        self.M = len(kernel_size)
+        self.features = out_channels
+        d = max(int(out_channels/r), L)
+
+        self.convs = nn.ModuleList([])
+        for k in kernel_size:
+            self.convs.append(nn.Sequential(
+                Conv2dSamePadding(
+                    in_channels, out_channels, k, stride=stride,
+                    padding=padding, dilation=dilation, **kwargs
+                ),
+                # nn.BatchNorm2d(out_ch),
+                # nn.ReLU(inplace=False),
+            ))
+        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        self.fc = nn.Sequential(
+            nn.Conv2d(out_channels, d, kernel_size=1, stride=1, bias=False),
+            # nn.BatchNorm2d(d),
+            # nn.ReLU(inplace=True)
+        )
+        self.fcs = nn.ModuleList([])
+        for i in range(self.M):
+            self.fcs.append(
+                nn.Linear(d, self.features)
+            )
+        self.softmax = nn.Softmax(dim=1)
+        
+    def forward(self, x):
+        
+        batch_size = x.shape[0]
+        
+        feats = [conv(x) for conv in self.convs]      
+        feats = torch.cat(feats, dim=1)
+        feats = feats.view(batch_size, self.M, self.features, feats.shape[-2], feats.shape[-1])
+        
+        feats_U = torch.sum(feats, dim=1)
+        feats_S = self.gap(feats_U)
+        feats_Z = self.fc(feats_S)
+        feats_Z = feats_Z.flatten(1)
+
+        attention_vectors = [fc(feats_Z).unsqueeze_(dim=1) for fc in self.fcs]
+        attention_vectors = torch.cat(attention_vectors, dim=1)
         attention_vectors = self.softmax(attention_vectors)
         attention_vectors = attention_vectors.unsqueeze(-1).unsqueeze(-1)
-        fea_v = (feas * attention_vectors).sum(dim=1)
+
+        fea_v = (feats * attention_vectors).sum(dim=1)
+
         return fea_v
     
 
@@ -361,6 +422,18 @@ if __name__ == "__main__":
 
     input = torch.randn(1, 3, 224, 224)
     conv = MixedConv2d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1, dilation=3, bias=False)
+    output = conv(input)
+    print(output.shape)
+    # torch.Size([1, 64, 112, 112])
+
+    input = torch.randn(1, 3, 224)
+    conv = SKConv1d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1, dilation=3, bias=False)
+    output = conv(input)
+    print(output.shape)
+    # torch.Size([1, 64, 112])
+
+    input = torch.randn(1, 3, 224, 224)
+    conv = SKConv2d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112, 112])

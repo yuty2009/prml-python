@@ -125,6 +125,63 @@ class Conv2dSamePadding(_ConvNd):
                                    self.padding, self.dilation, self.groups)
 
 
+class SKConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding='', dilation=1,
+                 r=16, L=32, **kwargs):
+        super(SKConv, self).__init__()
+
+        kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
+        self.M = len(kernel_size)
+        self.features = out_channels
+        d = max(int(out_channels/r), L)
+
+        self.convs = nn.ModuleList([])
+        for k in kernel_size:
+            self.convs.append(nn.Sequential(
+                Conv2dSamePadding(
+                    in_channels, out_channels, k, stride=stride,
+                    padding=padding, dilation=dilation, **kwargs
+                ),
+                # nn.BatchNorm2d(out_ch),
+                # nn.ReLU(inplace=False),
+            ))
+        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        self.fc = nn.Sequential(
+            nn.Conv2d(out_channels, d, kernel_size=1, stride=1, bias=False),
+            # nn.BatchNorm2d(d),
+            # nn.ReLU(inplace=True)
+        )
+        self.fcs = nn.ModuleList([])
+        for i in range(self.M):
+            self.fcs.append(
+                nn.Linear(d, self.features)
+            )
+        self.softmax = nn.Softmax(dim=1)
+        
+    def forward(self, x):
+        
+        batch_size = x.shape[0]
+        
+        feats = [conv(x) for conv in self.convs]      
+        feats = torch.cat(feats, dim=1)
+        feats = feats.view(batch_size, self.M, self.features, feats.shape[2], feats.shape[3])
+        
+        feats_U = torch.sum(feats, dim=1)
+        feats_S = self.gap(feats_U)
+        feats_Z = self.fc(feats_S)
+        feats_Z = feats_Z.flatten(1)
+
+        attention_vectors = [fc(feats_Z).unsqueeze_(dim=1) for fc in self.fcs]
+        attention_vectors = torch.cat(attention_vectors, dim=1)
+        attention_vectors = self.softmax(attention_vectors)
+        attention_vectors = attention_vectors.unsqueeze(-1).unsqueeze(-1)
+
+        fea_v = (feats * attention_vectors).sum(dim=1)
+
+        return fea_v
+    
+
 class SSKConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3,
                  stride=1, padding='', dilation=1,
@@ -165,7 +222,7 @@ class SSKConv(nn.Module):
         feats_U = torch.sum(feats, dim=1)
         feats_S = self.gap(feats_U)
         feats_Z = self.fc(feats_S)
-        feats_Z = feats_Z.view(batch_size, -1)
+        feats_Z = feats_Z.flatten(1)
 
         attention_vectors = self.sparse_fc(feats_Z)
         attention_vectors = attention_vectors.view(batch_size, self.M, self.features, 1, 1)
@@ -271,6 +328,12 @@ if __name__=='__main__':
     x = torch.rand(8, 3, 224, 224)
     model = SKNet26()
     out = model(x)
+    print(out.shape)
+
+    conv = SSKConv(3, 64, kernel_size=[3, 5, 7], stride=1, padding=1)
+    print(conv)
+    out = conv(x)
+    print(out.shape)
     
     #flops, params = profile(model, (x, ))
     #flops, params = clever_format([flops, params], "%.5f")
