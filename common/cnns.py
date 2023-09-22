@@ -165,29 +165,18 @@ class Conv1dSamePadding(_ConvNd):
     def forward(self, input):
         return conv1d_same_padding(input, self.weight, self.bias, self.stride,
                                    self.padding, self.dilation, self.groups)
-    
-
-"""
-from functools import reduce
-from operator import __add__
-class Conv2dSamePadding(nn.Conv2d):
-    def __init__(self,*args,**kwargs):
-        super(Conv2dSamePadding, self).__init__(*args, **kwargs)
-        self.zero_pad_2d = nn.ZeroPad2d(reduce(__add__,
-            [(k // 2 + (k - 2 * (k // 2)) - 1, k // 2) for k in self.kernel_size[::-1]]))
-
-    def forward(self, input):
-        return  self._conv_forward(self.zero_pad_2d(input), self.weight, self.bias)
-"""
 
 
 def conv2d_same_padding(input, weight, bias=None, stride=1, padding=1, dilation=1, groups=1):
-    input_rows = input.size(2)
-    filter_rows = weight.size(2)
+    input_rows = input.size(-2)
+    input_cols = input.size(-1)
+    filter_rows = weight.size(-2)
+    filter_cols = weight.size(-1)
     out_rows = (input_rows + stride[0] - 1) // stride[0]
+    out_cols = (input_cols + stride[1] - 1) // stride[1]
     padding_rows = max(0, (out_rows - 1) * stride[0] + (filter_rows - 1) * dilation[0] + 1 - input_rows)
     rows_odd = (padding_rows % 2 != 0)
-    padding_cols = max(0, (out_rows - 1) * stride[0] + (filter_rows - 1) * dilation[0] + 1 - input_rows)
+    padding_cols = max(0, (out_cols - 1) * stride[1] + (filter_cols - 1) * dilation[1] + 1 - input_cols)
     cols_odd = (padding_cols % 2 != 0)
 
     if rows_odd or cols_odd:
@@ -225,7 +214,7 @@ class MixedConv1d(nn.ModuleDict):
     """
 
     def __init__(self, in_channels, out_channels, kernel_size=3,
-                 stride=1, padding='', dilation=1, depthwise=False, **kwargs):
+                 stride=1, dilation=1, depthwise=False, **kwargs):
         super(MixedConv1d, self).__init__()
 
         kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
@@ -241,7 +230,7 @@ class MixedConv1d(nn.ModuleDict):
                 str(idx),
                 Conv1dSamePadding(
                     in_ch, out_ch, k, stride=stride,
-                    padding=padding, dilation=dilation, groups=conv_groups, **kwargs)
+                    padding=0, dilation=dilation, groups=conv_groups, **kwargs)
             )
         self.splits = in_splits
 
@@ -259,7 +248,7 @@ class MixedConv2d(nn.ModuleDict):
     """
 
     def __init__(self, in_channels, out_channels, kernel_size=3,
-                 stride=1, padding='', dilation=1, depthwise=False, **kwargs):
+                 stride=1, dilation=1, depthwise=False, **kwargs):
         super(MixedConv2d, self).__init__()
 
         kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
@@ -275,7 +264,7 @@ class MixedConv2d(nn.ModuleDict):
                 str(idx),
                 Conv2dSamePadding(
                     in_ch, out_ch, k, stride=stride,
-                    padding=padding, dilation=dilation, groups=conv_groups, **kwargs)
+                    padding=0, dilation=dilation, groups=conv_groups, **kwargs)
             )
         self.splits = in_splits
 
@@ -288,8 +277,7 @@ class MixedConv2d(nn.ModuleDict):
 
 class SKConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3,
-                 stride=1, padding='', dilation=1,
-                 r=16, L=32, **kwargs):
+                 stride=1, dilation=1, r=16, L=32, **kwargs):
         super(SKConv1d, self).__init__()
 
         kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
@@ -302,7 +290,7 @@ class SKConv1d(nn.Module):
             self.convs.append(nn.Sequential(
                 Conv1dSamePadding(
                     in_channels, out_channels, k, stride=stride,
-                    padding=padding, dilation=dilation, **kwargs
+                    padding=0, dilation=dilation, **kwargs
                 ),
                 # nn.BatchNorm1d(out_ch),
                 # nn.ReLU(inplace=False),
@@ -345,8 +333,7 @@ class SKConv1d(nn.Module):
 
 class SKConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3,
-                 stride=1, padding='', dilation=1,
-                 r=16, L=32, **kwargs):
+                 stride=1, dilation=1, r=16, L=32, **kwargs):
         super(SKConv2d, self).__init__()
 
         kernel_size = kernel_size if isinstance(kernel_size, list) else [kernel_size]
@@ -359,7 +346,7 @@ class SKConv2d(nn.Module):
             self.convs.append(nn.Sequential(
                 Conv2dSamePadding(
                     in_channels, out_channels, k, stride=stride,
-                    padding=padding, dilation=dilation, **kwargs
+                    padding=0, dilation=dilation, **kwargs
                 ),
                 # nn.BatchNorm2d(out_ch),
                 # nn.ReLU(inplace=False),
@@ -403,37 +390,37 @@ class SKConv2d(nn.Module):
 if __name__ == "__main__":
 
     input = torch.randn(1, 3, 224)
-    conv = Conv1dSamePadding(3, 64, kernel_size=7, stride=2, padding=1, dilation=3, bias=False)
+    conv = Conv1dSamePadding(3, 64, kernel_size=7, stride=2, dilation=3, bias=False)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112])
 
     input = torch.randn(1, 3, 224)
-    conv = MixedConv1d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1, dilation=3, bias=False)
+    conv = MixedConv1d(3, 64, kernel_size=[3, 5, 7], stride=2, dilation=3, bias=False)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112])
 
     input = torch.randn(1, 3, 224, 224)
-    conv = Conv2dSamePadding(3, 64, kernel_size=7, stride=2, padding=1, dilation=3, bias=False)
+    conv = Conv2dSamePadding(3, 64, kernel_size=7, stride=2, dilation=3, bias=False)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112, 112])
 
     input = torch.randn(1, 3, 224, 224)
-    conv = MixedConv2d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1, dilation=3, bias=False)
+    conv = MixedConv2d(3, 64, kernel_size=[3, 5, 7], stride=2, dilation=3, bias=False)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112, 112])
 
     input = torch.randn(1, 3, 224)
-    conv = SKConv1d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1, dilation=3, bias=False)
+    conv = SKConv1d(3, 64, kernel_size=[3, 5, 7], stride=2, dilation=3, bias=False)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112])
 
     input = torch.randn(1, 3, 224, 224)
-    conv = SKConv2d(3, 64, kernel_size=[3, 5, 7], stride=2, padding=1)
+    conv = SKConv2d(3, 64, kernel_size=[3, 5, 7], stride=2)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112, 112])
