@@ -1,11 +1,12 @@
 # refer to https://github.com/facebookresearch/mae
 import torch
 import torch.nn as nn
-from .mask import MaskGenerator2d
-from .modules import PatchEmbedding2d
-from .modules import SinCosPositionalEmbedding2d
-from .modules import TransformerEncoderLayer
-from .modules import TransformerEncoder
+import os, sys; sys.path.append(os.getcwd())
+from common.mask import MaskGenerator2d
+from common.modules import PatchEmbedding2d
+from common.modules import SinCosPositionalEmbedding2d
+from common.modules import TransformerEncoderLayer
+from common.modules import TransformerEncoder
 
 
 def pair(t):
@@ -47,7 +48,7 @@ class MAE(nn.Module):
             ),
             num_layers_decoder,
         )
-        self.norm = norm_layer(embed_dim_decoder)
+        self.norm_decoder = norm_layer(embed_dim_decoder)
 
         # decoder to patch
         self.head_decoder = nn.Linear(embed_dim_decoder, self.patch_size[0]*self.patch_size[1]*in_chans, bias=True)
@@ -104,7 +105,7 @@ class MAE(nn.Module):
         x = self.pos_embed(x)
         # apply Transformer blocks
         x = self.encoder(x)[0][-1] # only use the last layer
-        x = self.norm(x)
+        x = self.norm_encoder(x)
         return x, mask
 
     def refill_mask(self, x, mask):
@@ -194,8 +195,6 @@ class MAE(nn.Module):
     
 
 if __name__ == '__main__':
-
-    from vit_timm import ViT
 
     model = MAE(
         input_size = (224, 224),

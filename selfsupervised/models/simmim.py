@@ -2,11 +2,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .mask import MaskGenerator2d
-from .modules import PatchEmbedding2d
-from .modules import SinCosPositionalEmbedding2d
-from .modules import TransformerEncoderLayer
-from .modules import TransformerEncoder
+import os, sys; sys.path.append(os.getcwd())
+from common.mask import MaskGenerator2d
+from common.modules import PatchEmbedding2d
+from common.modules import SinCosPositionalEmbedding2d
+from common.modules import TransformerEncoderLayer
+from common.modules import TransformerEncoder
 
 
 def pair(t):

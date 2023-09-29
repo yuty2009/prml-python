@@ -4,9 +4,10 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import common.distributed as dist
-from .head import MLPHead
-from .mask import MaskGenerator2d
+import os, sys; sys.path.append(os.getcwd())
+from common import distributed as dist
+from common.head import MLPHead
+from common.mask import MaskGenerator2d
 
 
 def pair(t):

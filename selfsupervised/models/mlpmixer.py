@@ -2,7 +2,8 @@
 import torch
 import torch.nn as nn
 from torch.nn.modules.utils import _pair
-from modules import PatchEmbedding2d
+import os, sys; sys.path.append(os.getcwd())
+from common.modules import PatchEmbedding2d
 
 
 class MLPMixerLayer(nn.Module):

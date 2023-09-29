@@ -2,7 +2,8 @@
 import copy
 import torch
 import torch.nn as nn
-from .head import MLPHead
+import os, sys; sys.path.append(os.getcwd())
+from common.head import MLPHead
 
 
 class BYOL(nn.Module):

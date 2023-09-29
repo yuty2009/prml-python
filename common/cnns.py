@@ -387,6 +387,48 @@ class SKConv2d(nn.Module):
         return fea_v
     
 
+class SKUnit(nn.Module):
+    def __init__(self, in_features, mid_features, out_features, kernel_size=3,
+                 stride=1, dilation=1, r=16, L=32, **kwargs):
+        super(SKUnit, self).__init__()
+        
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_features, mid_features, 1, stride=1, bias=False),
+            nn.BatchNorm2d(mid_features),
+            nn.ReLU(inplace=True)
+            )
+        
+        self.conv2_sk = SKConv2d(
+            mid_features, mid_features, kernel_size=kernel_size,
+            stride=stride, dilation=dilation, r=r, L=L, **kwargs
+        )
+        
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(mid_features, out_features, 1, stride=1, bias=False),
+            nn.BatchNorm2d(out_features)
+            )
+        
+
+        if in_features == out_features: # when dim not change, input_features could be added diectly to out
+            self.shortcut = nn.Sequential()
+        else: # when dim not change, input_features should also change dim to be added to out
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_features, out_features, 1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_features)
+            )
+        
+        self.relu = nn.ReLU(inplace=True)
+    
+    def forward(self, x):
+        residual = x
+        
+        out = self.conv1(x)
+        out = self.conv2_sk(out)
+        out = self.conv3(out)
+        
+        return self.relu(out + self.shortcut(residual))
+    
+
 if __name__ == "__main__":
 
     input = torch.randn(1, 3, 224)
@@ -421,6 +463,12 @@ if __name__ == "__main__":
 
     input = torch.randn(1, 3, 224, 224)
     conv = SKConv2d(3, 64, kernel_size=[3, 5, 7], stride=2)
+    output = conv(input)
+    print(output.shape)
+    # torch.Size([1, 64, 112, 112])
+
+    input = torch.randn(1, 3, 224, 224)
+    conv = SKUnit(3, 32, 64, kernel_size=[3, 5, 7], stride=2)
     output = conv(input)
     print(output.shape)
     # torch.Size([1, 64, 112, 112])

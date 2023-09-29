@@ -2,8 +2,9 @@
 import copy
 import torch
 import torch.nn as nn
-from .head import MLPHead
-from .mask import MaskGenerator2d
+import os, sys; sys.path.append(os.getcwd())
+from common.head import MLPHead
+from common.mask import MaskGenerator2d
 
 
 def pair(t):

@@ -1,10 +1,10 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from modules import SinCosPositionalEmbedding1d
-from modules import TransformerEncoderLayer
-from modules import TransformerEncoder
+import os, sys; sys.path.append(os.getcwd())
+from common.modules import SinCosPositionalEmbedding1d
+from common.modules import TransformerEncoderLayer
+from common.modules import TransformerEncoder
 
 
 class TransformerMIL(nn.Module):

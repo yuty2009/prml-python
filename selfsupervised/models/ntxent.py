@@ -1,16 +1,28 @@
+
 import torch
 import torch.nn as nn
 
 
 class NTXentLoss(nn.Module):
-    def __init__(self, temperature=0.5):
+    def __init__(self, temperature=0.5, symmetric=False):
         super(NTXentLoss, self).__init__()
+        self.symmetric = symmetric
         self.temperature = temperature
         self.world_size = 1
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             self.world_size = torch.distributed.get_world_size()
 
-    def forward(self, z1, z2):
+    def forward(self, outputs):
+        z1, z2 = outputs
+        if not self.symmetric:
+            return self.forward_1(z1, z2)
+        else:
+            loss_1 = self.forward_1(z1, z2)
+            loss_2 = self.forward_1(z2, z1)
+            loss = 0.5 * (loss_1 + loss_2)
+            return loss
+        
+    def forward_1(self, z1, z2):
         N = z1.shape[0] # * self.world_size
         z = torch.cat((z1, z2), dim=0)  # [2N, D]
         # z = torch.cat(GatherLayer.apply(z), dim=0)
@@ -84,11 +96,23 @@ class NTXentLoss2(nn.Module):
     
 
 class NTXentLossWithQueue(nn.Module):
-    def __init__(self, temperature=0.5):
+    def __init__(self, temperature=0.5, symmetric=False):
         super(NTXentLossWithQueue, self).__init__()
+        self.symmetric = symmetric
         self.temperature = temperature
 
-    def forward(self, q, k, queue):
+    def forward(self, outputs):
+        if not self.symmetric:
+            q, k, queue = outputs
+            return self.forward_1(q, k, queue)
+        else:
+            p1, p2, t1, t2, queue = outputs
+            loss_1 = self.forward_1(p1, t1, queue)
+            loss_2 = self.forward_1(p2, t2, queue)
+            loss = 0.5 * (loss_1 + loss_2)
+            return loss
+
+    def forward_1(self, q, k, queue):
         # compute logits
         # positive logits: Nx1
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
@@ -99,8 +123,33 @@ class NTXentLossWithQueue(nn.Module):
         # apply temperature
         logits /= self.temperature
         # labels: positive key indicators
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).to(q.device)
         loss = nn.functional.cross_entropy(logits, labels)
+        return loss
+    
+
+class MultiViewNTXentLossWithQueue(nn.Module):
+    def __init__(self, loss_self, loss_cross, alpha=0.5) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.loss_self = loss_self
+        self.loss_cross = loss_cross
+    def forward(self, p1, p2, t1, t2, queue_1, queue_2):
+        loss_1 = self.loss_self(p1, t1, queue_1)
+        loss_2 = self.loss_self(p2, t2, queue_2)
+        loss_x = self.loss_cross(p1, p2)
+        loss = self.alpha * 0.5 * (loss_1 + loss_2) + (1-self.alpha) * loss_x
+        return loss
+    
+
+class CosSimLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss_fn = nn.CosineSimilarity(dim=1)
+
+    def forward(self, outputs):
+        p1, p2, t1, t2 = outputs
+        loss = -0.5 * (self.loss_fn(p1, t2).mean() + self.loss_fn(p2, t1).mean())
         return loss
     
 

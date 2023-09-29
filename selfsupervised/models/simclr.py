@@ -4,7 +4,8 @@
 #       and https://github.com/KeremTurgutlu/self_supervised/self_supervised/vision/simclr.py
 import torch
 import torch.nn as nn
-from .head import MLPHead
+import os, sys; sys.path.append(os.getcwd())
+from common.head import MLPHead
 
 
 class SimCLR(nn.Module):

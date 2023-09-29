@@ -4,8 +4,9 @@
 import copy
 import torch
 import torch.nn as nn
-import common.distributed as dist
-from .head import MLPHead
+import os, sys; sys.path.append(os.getcwd())
+from common import distributed as dist
+from common.head import MLPHead
 
 
 class MoCo(nn.Module):

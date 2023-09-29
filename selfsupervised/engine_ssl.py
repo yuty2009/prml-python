@@ -170,25 +170,8 @@ def train_epoch_cl(data_loader, model, criterion, optimizer, epoch, args):
         images[0] = images[0].to(args.device)
         images[1] = images[1].to(args.device)
 
-        if str.lower(args.ssl) in ['moco', 'mocov1', 'mocov2']:
-            if hasattr(args, 'symmetric') and args.symmetric:
-                p1, p2, t1, t2, queue = model(images[0], images[1])
-                loss = 0.5 * (criterion(p1, t1, queue) + criterion(p2, t2, queue))
-            else:
-                p1, t1, queue = model(images[0], images[1])
-                loss = criterion(p1, t1, queue)
-
-        elif str.lower(args.ssl) in ['simclr', 'simclr_v1']: # big batch_size required
-            p1, t1 = model(images[0], images[1])
-            loss = 0.5 * (criterion(p1, t1) + criterion(t1, p1))
-
-        elif str.lower(args.ssl) in ['swav', 'dino']: # multi-crop supported
-            p1, t1 = model(images)
-            loss = criterion(p1, t1)
-
-        elif str.lower(args.ssl) in ['byol', 'simsiam']: # without negative samples
-            p1, p2, t1, t2 = model(images[0], images[1])
-            loss = -0.5 * (criterion(p1, t2).mean() + criterion(p2, t1).mean())
+        outputs = model(images[0], images[1])
+        loss = criterion(outputs)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -290,7 +273,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
             momentum = args.momentum, 
             symmetric = args.symmetric,
         )
-        criterion = ntxent.NTXentLossWithQueue(args.temperature)
+        criterion = ntxent.NTXentLossWithQueue(args.temperature, args.symmetric)
 
     elif str.lower(args.ssl) in ['simclr', 'simclr_v1']:
         args.lr = 1e-3 # 1e-3 for cifar10
@@ -299,6 +282,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
         args.n_mlplayers = 2
         args.hidden_dim = 128
         args.use_bn = False
+        args.symmetric = True
         args.temperature = 0.5
         model = simclr.SimCLR(
             encoder = base_encoder, 
@@ -308,26 +292,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
             hidden_dim = args.hidden_dim,
             use_bn = args.use_bn,
         )
-        criterion = ntxent.NTXentLoss(args.temperature)
-
-    elif str.lower(args.ssl) in ['swav']:
-        args.lr = 6e-2 # 6e-2 for cifar10
-        args.weight_decay = 5e-4 # 5e-4 for cifar10
-        args.feature_dim = 512
-        args.n_mlplayers = 2
-        args.hidden_dim = 128
-        args.use_bn = False
-        args.temperature = 0.5
-        model = swav.SwAV(
-            encoder = base_encoder, 
-            encoder_dim = args.encoder_dim, 
-            feature_dim = args.feature_dim,
-            n_mlplayers = args.n_mlplayers,
-            hidden_dim = args.hidden_dim,
-            use_bn = args.use_bn,
-            n_prototypes = 30, # 30 for cifar10, 3000 for imagenet-1k
-        )
-        criterion = swav.SwAVLoss(2, args.temperature)
+        criterion = ntxent.NTXentLoss(args.temperature, args.symmetric)
 
     elif str.lower(args.ssl) in ['byol']:
         args.lr = 6e-2 # 6e-2 for cifar10
@@ -348,7 +313,7 @@ def get_ssl_model_and_criterion(base_encoder, args):
             use_bn = args.use_bn,
             momentum = args.momentum,
         )
-        criterion = nn.CosineSimilarity(dim=1)
+        criterion = ntxent.CosSimLoss()
     
     elif str.lower(args.ssl) in ['simsiam']:
         args.lr = 6e-2 # 6e-2 for cifar10
@@ -367,7 +332,26 @@ def get_ssl_model_and_criterion(base_encoder, args):
             hidden_dim = args.hidden_dim,
             use_bn = args.use_bn,
         )
-        criterion = nn.CosineSimilarity(dim=1)
+        criterion = ntxent.CosSimLoss()
+
+    elif str.lower(args.ssl) in ['swav']:
+        args.lr = 6e-2 # 6e-2 for cifar10
+        args.weight_decay = 5e-4 # 5e-4 for cifar10
+        args.feature_dim = 512
+        args.n_mlplayers = 2
+        args.hidden_dim = 128
+        args.use_bn = False
+        args.temperature = 0.5
+        model = swav.SwAV(
+            encoder = base_encoder, 
+            encoder_dim = args.encoder_dim, 
+            feature_dim = args.feature_dim,
+            n_mlplayers = args.n_mlplayers,
+            hidden_dim = args.hidden_dim,
+            use_bn = args.use_bn,
+            n_prototypes = 30, # 30 for cifar10, 3000 for imagenet-1k
+        )
+        criterion = swav.SwAVLoss(2, args.temperature)
 
     elif str.lower(args.ssl) in ['dino']:
         args.lr = 6e-2 # 1e-3 for cifar10
