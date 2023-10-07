@@ -45,7 +45,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="e:/prmldata")
-    parser.add_argument("--dataset", type=str, choices=DATASETS.keys(), default="mnist")
+    parser.add_argument("--dataset", type=str, choices=DATASETS.keys(), default="cifar10")
     parser.add_argument("--num_clusters", default=16, type=int)
     parser.add_argument(
         "--batch_size",

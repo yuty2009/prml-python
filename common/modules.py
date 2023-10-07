@@ -7,11 +7,45 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.utils import _pair
+from einops.layers.torch import Rearrange
 from timm.models.vision_transformer import DropPath
 from nystrom_attention import NystromAttention
+
+
+class PatchEmbeddingRaw1d(nn.Module):
+    """ 1D Patch Embedding with raw input
+    """
+    def __init__(self, input_size=224, patch_size=16, in_chans=1, embed_dim=384):
+        super().__init__()
+        self.num_patches = input_size // patch_size
+        patch_dim = in_chans * patch_size
+        self.proj = nn.Sequential(
+            Rearrange('b c (n p) 1 -> b n (p c)', p = patch_size),
+            nn.Linear(patch_dim, embed_dim),
+        )
+    def forward(self, x):
+        return self.proj(x)
     
 
-class PatchEmbedding(nn.Module):
+class PatchEmbeddingRaw2d(nn.Module):
+    """ 2D Patch Embedding with raw input
+    """
+    def __init__(self, input_size=224, patch_size=16, in_chans=3, embed_dim=384):
+        super().__init__()
+        input_size = _pair(input_size)
+        patch_size = _pair(patch_size)
+        self.num_patches = (input_size[0] // patch_size[0]) * (input_size[1] // patch_size[1])
+        patch_dim = in_chans * patch_size[0] * patch_size[1]
+        self.proj = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_size[0], p2 = patch_size[1]),
+            nn.Linear(patch_dim, embed_dim),
+        )
+    def forward(self, x):
+        return self.proj(x)
+
+
+class PatchEmbedding1d(nn.Module):
     """ 1D Time series to Patch Embedding
     """
     def __init__(self, patch_size=10, in_chans=1, embed_dim=384, norm_layer=None, flatten=True):
@@ -32,10 +66,7 @@ class PatchEmbedding(nn.Module):
         x = x.transpose(-2, -1)  # BCN -> BNC and normlize on the feature dimention
         x = self.norm(x)
         return x
-    
 
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
 
 class PatchEmbedding2d(nn.Module):
     """ 2D Patch Embedding
@@ -43,7 +74,7 @@ class PatchEmbedding2d(nn.Module):
     def __init__(self, patch_size=10, in_chans=3, embed_dim=384, norm_layer=None, flatten=True):
         super().__init__()
         self.flatten = flatten
-        patch_size = pair(patch_size)
+        patch_size = _pair(patch_size)
         self.proj = nn.Conv2d(
             in_chans, embed_dim, kernel_size=patch_size, stride=patch_size, bias=False
         )
@@ -458,6 +489,22 @@ class TransformerDecoder(torch.nn.Module):
 
 
 if __name__ == '__main__':
+
+    x1 = torch.randn(8, 1, 3000, 1)
+    patch_embed_11 = PatchEmbeddingRaw1d(3000, 10, 1, 128)
+    patch_embed_12 = PatchEmbedding1d(10, 1, 128)
+    x_embd_11 = patch_embed_11(x1)
+    x_embd_12 = patch_embed_12(x1)
+    print(x_embd_11.shape)
+    print(x_embd_12.shape)
+
+    x2 = torch.randn(8, 3, 224, 224)
+    patch_embed_21 = PatchEmbeddingRaw2d(224, 16, 3, 128)
+    patch_embed_22 = PatchEmbedding2d(16, 3, 128)
+    x_embd_21 = patch_embed_21(x2)
+    x_embd_22 = patch_embed_22(x2)
+    print(x_embd_21.shape)
+    print(x_embd_22.shape)
 
     posembed = SinCosPositionalEmbedding1d(128, 100)
     

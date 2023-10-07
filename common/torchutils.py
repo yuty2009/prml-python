@@ -18,24 +18,39 @@ def train_epoch(data_loader, model, criterion, optimizer, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
+    if hasattr(args, 'use_amp') and args.use_amp:
+        if not hasattr(args, 'scaler'):
+            args.scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+    else:
+        args.use_amp = False
+        args.scaler = None
+
     for data, target in data_bar:
         data = data.to(args.device)
         target = target.to(args.device)
         # compute output
-        output = model(data)
-        loss = criterion(output, target)
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
+            output = model(data)
+            loss = criterion(output, target)
         # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if args.use_amp and args.scaler is not None:
+            args.scaler.scale(loss).backward()
+            args.scaler.step(optimizer)
+            args.scaler.update()
+            optimizer.zero_grad()
+        else:
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         loss = dist.all_reduce(loss)
         total_loss += loss.item()
         total_num += data.size(0)
-        preds = torch.argsort(output, dim=-1, descending=True)
+        logits = output[0] if isinstance(output, tuple) else output
+        preds = torch.argsort(logits, dim=-1, descending=True)
         for i, k in enumerate(args.topk):
-                total_corrects[i] += torch.sum((preds[:, 0:k] \
-                    == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+            total_corrects[i] += torch.sum((preds[:, 0:k] \
+                == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
         accuks = 100 * total_corrects / total_num
 
         if show_bar:

@@ -54,7 +54,7 @@ class BYOL(nn.Module):
                                     self.model_momentum.parameters()):
             param_k.data = param_k.data * self.momentum + param_q.data * (1. - self.momentum)
 
-    def forward(self, x1, x2):
+    def forward(self, inputs):
         """
         Input:
             x1: first views of images
@@ -63,7 +63,7 @@ class BYOL(nn.Module):
             p1, p2, t1, t2: predictors and targets of the network
             See Sec. 3 of https://arxiv.org/abs/2006.07733 for detailed notations
         """
-
+        x1, x2 = inputs
         # compute features for one view
         h1 = self.model(x1) # NxC
         h2 = self.model(x2) # NxC

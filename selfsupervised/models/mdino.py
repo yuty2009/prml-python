@@ -4,14 +4,12 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.utils import _pair
 import os, sys; sys.path.append(os.getcwd())
 from common import distributed as dist
 from common.head import MLPHead
 from common.mask import MaskGenerator2d
 
-
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
 
 class FlattenSeq(nn.Module):
     def forward(self, x):
@@ -40,15 +38,16 @@ class MDINO(nn.Module):
         """
         super(MDINO, self).__init__()
 
-        ih, iw = pair(image_size)
-        ph, pw = pair(patch_size)
+        self.momentum = momentum
+        self.input_size = _pair(image_size)
+        self.patch_size = _pair(patch_size)
+
+        ih, iw = self.input_size
+        ph, pw = self.patch_size
         assert ih % ph == 0 and iw % pw == 0, \
                'Image dimensions must be divisible by the patch size.'
         num_patches = (ih // ph) * (iw // pw)
         self.num_patches = num_patches
-        self.input_size = pair(image_size)
-        self.patch_size = pair(patch_size)
-        self.momentum = momentum
 
         self.mask_generator = MaskGenerator2d(mask_prob=0.65, mask_type='random')
 

@@ -1,6 +1,7 @@
 # refer to https://github.com/facebookresearch/mae
 import torch
 import torch.nn as nn
+from torch.nn.modules.utils import _pair
 import os, sys; sys.path.append(os.getcwd())
 from common.mask import MaskGenerator2d
 from common.modules import PatchEmbedding2d
@@ -9,9 +10,6 @@ from common.modules import TransformerEncoderLayer
 from common.modules import TransformerEncoder
 
 
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
-
 class MAE(nn.Module):
     def __init__(self, input_size=224, patch_size=16, in_chans=3, mask_prob=0.75,
                  embed_dim=1024, num_layers=24, num_heads=16, mlp_ratio=4.,
@@ -19,8 +17,8 @@ class MAE(nn.Module):
                  embed_dim_decoder=512, num_layers_decoder=8,  num_heads_decoder=16,
                  norm_pix_loss=False):
         super().__init__()
-        input_size = pair(input_size)
-        patch_size = pair(patch_size)
+        input_size = _pair(input_size)
+        patch_size = _pair(patch_size)
         self.patch_size = patch_size
         self.num_patches = (input_size[0] // patch_size[0]) * (input_size[1] // patch_size[1])
 
@@ -51,7 +49,7 @@ class MAE(nn.Module):
         self.norm_decoder = norm_layer(embed_dim_decoder)
 
         # decoder to patch
-        self.head_decoder = nn.Linear(embed_dim_decoder, self.patch_size[0]*self.patch_size[1]*in_chans, bias=True)
+        self.head_decoder = nn.Linear(embed_dim_decoder, self.patch_size[0]*self.patch_size[1]*in_chans)
         self.norm_pix_loss = norm_pix_loss
 
         self.initialize_weights()

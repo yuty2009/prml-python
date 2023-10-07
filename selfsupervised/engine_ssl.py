@@ -88,15 +88,28 @@ def train_epoch(data_loader, model, optimizer, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-    for step, (images, _) in enumerate(data_bar):
+    if hasattr(args, 'use_amp') and args.use_amp:
+        if not hasattr(args, 'scaler'):
+            args.scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+    else:
+        args.use_amp = False
+        args.scaler = None
 
-        images = images.to(args.device)
-        loss = model(images)[0]
-
+    for step, (data, _) in enumerate(data_bar):
+        data = data.to(args.device)
         # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
+            loss = model(data)[0]
+        # compute gradient and do SGD step
+        if args.use_amp and args.scaler is not None:
+            args.scaler.scale(loss).backward()
+            args.scaler.step(optimizer)
+            args.scaler.update()
+            optimizer.zero_grad()
+        else:
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         loss = dist.all_reduce(loss)
         total_loss += loss.item()
@@ -165,18 +178,32 @@ def train_epoch_cl(data_loader, model, criterion, optimizer, epoch, args):
         show_bar = True
     data_bar = tqdm.tqdm(data_loader) if show_bar else data_loader
 
-    for step, (images, _) in enumerate(data_bar):
+    if hasattr(args, 'use_amp') and args.use_amp:
+        if not hasattr(args, 'scaler'):
+            args.scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+    else:
+        args.use_amp = False
+        args.scaler = None
 
-        images[0] = images[0].to(args.device)
-        images[1] = images[1].to(args.device)
+    for step, (data, _) in enumerate(data_bar):
+        num_views = len(data)
+        data = torch.cat(data, dim=0)
+        data = data.to(args.device)
+        data = list(data.chunk(num_views))
 
-        outputs = model(images[0], images[1])
-        loss = criterion(outputs)
-
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
+            outputs = model(data)
+            loss = criterion(outputs)
         # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if args.use_amp and args.scaler is not None:
+            args.scaler.scale(loss).backward()
+            args.scaler.step(optimizer)
+            args.scaler.update()
+            optimizer.zero_grad()
+        else:
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         loss = dist.all_reduce(loss)
         total_loss += loss.item()

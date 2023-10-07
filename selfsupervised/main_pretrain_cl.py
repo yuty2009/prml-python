@@ -114,6 +114,8 @@ parser.add_argument('--mp', '--mp-dist', action='store_true', default=False,
                         'fastest way to use PyTorch for either single node or '
                         'multi node data parallel training',
                     dest='mp_dist')
+parser.add_argument('--use_amp', action='store_true', default=False,
+                    help='Use mixed precision training')
 
 
 def main(gpu, args):

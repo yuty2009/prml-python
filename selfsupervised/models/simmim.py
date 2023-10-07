@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.utils import _pair
 import os, sys; sys.path.append(os.getcwd())
 from common.mask import MaskGenerator2d
 from common.modules import PatchEmbedding2d
@@ -10,17 +11,14 @@ from common.modules import TransformerEncoderLayer
 from common.modules import TransformerEncoder
 
 
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
-
 class SimMIM(nn.Module):
     def __init__(self, input_size=224, patch_size=16, in_chans=3, mask_prob=0.75,
                  embed_dim=1024, num_layers=24, num_heads=16, mlp_ratio=4.,
                  norm_layer=nn.LayerNorm, dropout_transformer=0.1,
             ):
         super().__init__()
-        input_size = pair(input_size)
-        patch_size = pair(patch_size)
+        input_size = _pair(input_size)
+        patch_size = _pair(patch_size)
         self.patch_size = patch_size
         self.num_patches = (input_size[0] // patch_size[0]) * (input_size[1] // patch_size[1])
 

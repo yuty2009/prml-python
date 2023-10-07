@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import random
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 
 import torch
 import torchvision.transforms as transforms
@@ -27,6 +27,16 @@ class TransformMultiCrops:
     def __call__(self, x):
         multi_crops = list(map(lambda trans: trans(x), self.trans))
         return multi_crops
+    
+
+class TransformMultiViews(object):
+    def __init__(self, base_transform, num_views=4):
+        self.num_views = num_views
+        self.base_transform = base_transform
+      
+    def __call__(self, x):
+        x_views = [self.base_transform(x) for _ in range(self.num_views)]
+        return x_views
 
 
 class GaussianBlur(object):
@@ -39,6 +49,22 @@ class GaussianBlur(object):
         sigma = random.uniform(self.sigma[0], self.sigma[1])
         x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
         return x
+    
+
+class Solarization(object):
+    """Solarization as a callable object."""
+
+    def __call__(self, img: Image) -> Image:
+        """Applies solarization to an input image.
+
+        Args:
+            img (Image): an image in the PIL.Image format.
+
+        Returns:
+            Image: a solarized image.
+        """
+
+        return ImageOps.solarize(img)
 
 
 def get_transforms(type='', size=224, mean_std=None, color_jitter_s=1.0):
@@ -68,13 +94,14 @@ def get_transforms(type='', size=224, mean_std=None, color_jitter_s=1.0):
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(size),
-                transforms.RandomHorizontalFlip(), # with 0.5 probability
+                transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomApply([
-                    transforms.ColorJitter(0.4*s, 0.4*s, 0.4*s, 0.1*s)
+                    transforms.ColorJitter(0.4*s, 0.4*s, 0.4*s, 0.2*s)
                 ], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
                 # the image size of cifar10 is too small to apply gaussian blur
-                # transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+                transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.1),
+                transforms.RandomApply([Solarization()], p=0.1),
                 transforms.ToTensor(),
                 normalize
             ])

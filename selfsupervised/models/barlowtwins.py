@@ -26,7 +26,8 @@ class BarlowTwins(nn.Module):
             hidden_dims=[hidden_dim]*(n_mlplayers-1), use_bn=use_bn,
         )
 
-    def forward(self, x1, x2):
+    def forward(self, inputs):
+        x1, x2 = inputs
         z1 = self.projector(self.encoder(x1))
         z2 = self.projector(self.encoder(x2))
         z1 = nn.functional.normalize(z1, dim=1)

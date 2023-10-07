@@ -1,11 +1,9 @@
 
 import torch
 import torch.nn as nn
+from torch.nn.modules.utils import _pair
 from timm.models.vision_transformer import Block
 
-
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
 
 class ViT(nn.Module):
     def __init__(self, num_classes=0, input_size=224, patch_size=16, in_chans=3, 
@@ -15,10 +13,10 @@ class ViT(nn.Module):
         super().__init__()
         self.in_chans = in_chans
         self.embed_dim = embed_dim
-        self.input_size = pair(input_size)
+        self.input_size = _pair(input_size)
         
-        ih, iw = pair(input_size)
-        ph, pw = pair(patch_size)
+        ih, iw = _pair(input_size)
+        ph, pw = _pair(patch_size)
         assert ih % ph == 0 and iw % pw == 0, \
                'Image dimensions must be divisible by the patch size.'
         num_patches = (ih // ph) * (iw // pw)

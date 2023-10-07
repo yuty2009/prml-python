@@ -59,7 +59,7 @@ class SimSiam(nn.Module):
                                         nn.ReLU(inplace=True), # hidden layer
                                         nn.Linear(feature_dim, predict_dim)) # output layer
 
-    def forward(self, x1, x2):
+    def forward(self, inputs):
         """
         Input:
             x1: first views of images
@@ -68,7 +68,7 @@ class SimSiam(nn.Module):
             p1, p2, t1, t2: predictors and targets of the network
             See Sec. 3 of https://arxiv.org/abs/2011.10566 for detailed notations
         """
-
+        x1, x2 = inputs
         # compute features for one view
         t1 = self.model(x1) # NxC
         t2 = self.model(x2) # NxC

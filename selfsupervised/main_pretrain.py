@@ -21,12 +21,13 @@ from models.mae import MAE
 from models.simmim import SimMIM
 from models.mbyol import MBYOL
 from models.mdino import MDINO
+from models.cgpt import CGPTARModel
 
 
 image_datasets = {
     'cifar10' : {
-        'data_dir' : '/home/yuty2009/data/prmldata/cifar10/',
-        'output_dir' : '/home/yuty2009/data/prmldata/cifar10/output/',
+        'data_dir' : 'e:/prmldata/cifar10/',
+        'output_dir' : 'e:/prmldata/cifar10/output/',
     },
     'stl10' : {
         'data_dir' : 'e:/prmldata/stl10/',
@@ -41,21 +42,20 @@ image_datasets = {
 parser = argparse.ArgumentParser(description='Self-supervised Pretraining')
 parser.add_argument('-D', '--dataset', default='cifar10', metavar='PATH',
                     help='dataset used')
-parser.add_argument('--ssl', default='simmim', type=str,
+parser.add_argument('--ssl', default='cgpt', type=str,
                     help='self-supervised learning approach used')
 parser.add_argument('-p', '--patch-size', default=4, type=int, metavar='N',
                     help='patch size (default: 16) when dividing the long signal into windows')
-parser.add_argument('--embed_dim', default=384, type=int, metavar='N',
+parser.add_argument('--embed_dim', default=64, type=int, metavar='N',
                     help='embedded feature dimension (default: 192)')
 parser.add_argument('--num_layers', default=6, type=int, metavar='N',
                     help='number of transformer layers (default: 6)')
 parser.add_argument('--num_heads', default=8, type=int, metavar='N',
                     help='number of heads for multi-head attention (default: 6)')
 parser.add_argument('--mask_prob', default=0.75, type=float,
-                        help='Masking ratio (percentage of removed patches).')
-parser.add_argument('--norm_pix_loss', action='store_true',
-                        help='Use (per-patch) normalized pixels as targets for computing loss')
-parser.set_defaults(norm_pix_loss=False)
+                    help='Masking ratio (percentage of removed patches).')
+parser.add_argument('--norm_pix_loss', default=False, action='store_true',
+                    help='Use (per-patch) normalized pixels as targets for computing loss')
 parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
                     help='number of data loading workers (default: 1)')
 parser.add_argument('--epochs', default=800, type=int, metavar='N',
@@ -70,7 +70,7 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--optimizer', default='sgd', type=str,
                     choices=['adam', 'adamw', 'sgd', 'lars'],
                     help='optimizer used to learn the model')
-parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
+parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--min_lr', type=float, default=1e-8, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0')
@@ -83,7 +83,7 @@ parser.add_argument('--lr_drop', default=[0.6, 0.8], nargs='*', type=float,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=5e-2, type=float,
+parser.add_argument('--wd', '--weight-decay', default=5e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
 parser.add_argument('--topk', default=(1, 5), nargs='*', type=int,
@@ -112,6 +112,8 @@ parser.add_argument('--mp', '--mp-dist', action='store_true', default=False,
                         'fastest way to use PyTorch for either single node or '
                         'multi node data parallel training',
                     dest='mp_dist')
+parser.add_argument('--use_amp', action='store_true', default=True,
+                    help='Use mixed precision training')
 
 
 def main(gpu, args):
@@ -151,7 +153,7 @@ def main(gpu, args):
         num_workers=args.workers, pin_memory=True)
 
     # create model
-    print("=> creating MAE model")
+    print(f"=> creating {args.ssl} model")
     encoder = ViT(
         input_size = args.image_size,
         patch_size = args.patch_size,
@@ -208,6 +210,17 @@ def main(gpu, args):
             momentum = 0.996,
             image_size = args.image_size,
             patch_size = args.patch_size,
+        )
+    elif args.ssl in ['cgpt', 'CGPT']:
+        model = CGPTARModel(
+            num_classes = 0,
+            input_size = args.image_size,
+            patch_size = args.patch_size,
+            in_chans = 3,
+            embed_dim = args.embed_dim,
+            num_layers = args.num_layers,
+            num_heads = args.num_heads,
+            mlp_ratio = 4.0,
         )
     else:
         raise NotImplementedError
